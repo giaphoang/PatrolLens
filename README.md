@@ -69,6 +69,10 @@ query
 
 The default coarse temporal grid uses 16-second windows with an 8-second stride. A 90-minute video produces 674 coarse windows. Frames and audio remain timestamped at their original source positions; full videos are not sent to OpenRouter.
 
+## System design
+
+The formal problem definition, Mermaid architecture, modality mapping, timestamp strategy, and 90-minute video handling are documented in [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md).
+
 ## Evaluation format
 
 `patrol-lens evaluate` accepts JSONL records such as:
