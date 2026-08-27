@@ -2,19 +2,19 @@
 
 ## Problem formalization
 
-Given a corpus of videos \(V = \{v_1, \ldots, v_n\}\), each potentially 90 minutes long, and a natural-language query \(q\), return a ranked set:
+Given a corpus of videos $V = \{v_1, \ldots, v_n\}$, each potentially 90 minutes long, and a natural-language query $q$, return a ranked set:
 
-\[
+$$
 R(q) = \{(v_i, [t_s,t_e], p, E)\}
-\]
+$$
 
 where `[t_s,t_e]` is the smallest interval that supports the complete query, `p` is verifier confidence, and `E` is modality-specific evidence.
 
 Offline extraction creates canonical observations:
 
-\[
+$$
 e = (id, video\_id, t_s, t_e, modality, content/vector, confidence, source)
-\]
+$$
 
 This representation is the architectural contract. Models and indexes can change as long as they produce or consume the same observation shape.
 
@@ -124,11 +124,11 @@ Processing windows organize work; they are not the evidence unit. ASR utterances
 
 ### Long-video behavior
 
-For a duration \(D\), window size \(W\), and stride \(S\), the number of processing windows is approximately:
+For a duration $D$, window size $W$, and stride $S$, the number of processing windows is approximately:
 
-\[
+$$
 N = \left\lceil\frac{D-W}{S}\right\rceil + 1
-\]
+$$
 
 For 90 minutes, `W=16 s`, and `S=8 s`, the implementation emits 674 windows. Frame decoding is a single sequential FFmpeg pass, audio is decoded once, and all writes are deterministic upserts. An ingestion fingerprint permits restart/skip behavior.
 
@@ -159,11 +159,11 @@ flowchart TD
 
 The planner emits branch queries, required modalities, relation (`overlap`, `before`, `after`, `sequence`, or `any`), relation tolerance, and target (`event` or `onset`). A deterministic planner remains available for tests and offline debugging.
 
-For branch result rank \(r_m(e)\), fusion contributes:
+For branch result rank $r_m(e)$, fusion contributes:
 
-\[
+$$
 score(c) = \sum_m \frac{w_m}{k + r_m(c)}
-\]
+$$
 
 with `k=60` by default. Raw score scales from heterogeneous models are therefore not compared directly. Before fusion, evidence must satisfy the temporal relation. For a conjunctive query, candidates missing a required modality are discarded. This intentionally favors precision.
 
