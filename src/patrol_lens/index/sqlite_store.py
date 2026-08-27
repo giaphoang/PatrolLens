@@ -337,6 +337,87 @@ class IndexStore:
             self._insert_evidence_many(evidence_items)
             self._insert_embeddings(embedding_items)
 
+    def get_cached_embedding(
+        self,
+        cache_key: str,
+        *,
+        expected_dimensions: int,
+    ) -> list[float] | None:
+        row = self.db.execute(
+            "SELECT vector_json, dimensions FROM embedding_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+        if row is None or int(row["dimensions"]) != expected_dimensions:
+            return None
+        self.db.execute(
+            "UPDATE embedding_cache SET last_used_at = CURRENT_TIMESTAMP WHERE cache_key = ?",
+            (cache_key,),
+        )
+        self.db.commit()
+        return [float(value) for value in json.loads(row["vector_json"])]
+
+    def get_cached_embeddings(
+        self,
+        cache_keys: list[str],
+        *,
+        expected_dimensions: int,
+    ) -> dict[str, list[float]]:
+        if not cache_keys:
+            return {}
+        unique = list(dict.fromkeys(cache_keys))
+        placeholders = ",".join("?" for _ in unique)
+        rows = self.db.execute(
+            f"""SELECT cache_key, vector_json FROM embedding_cache
+                WHERE dimensions = ? AND cache_key IN ({placeholders})""",
+            [expected_dimensions, *unique],
+        ).fetchall()
+        found = {
+            row["cache_key"]: [float(value) for value in json.loads(row["vector_json"])]
+            for row in rows
+        }
+        if found:
+            self.db.executemany(
+                "UPDATE embedding_cache SET last_used_at = CURRENT_TIMESTAMP WHERE cache_key = ?",
+                [(key,) for key in found],
+            )
+            self.db.commit()
+        return found
+
+    def put_cached_embedding(
+        self,
+        cache_key: str,
+        *,
+        content_hash: str,
+        modality: str,
+        model: str,
+        dimensions: int,
+        preprocessing_version: str,
+        vector: list[float],
+    ) -> None:
+        if len(vector) != dimensions:
+            raise ValueError(f"Expected {dimensions}, got {len(vector)}")
+        self.db.execute(
+            """INSERT INTO embedding_cache
+               (cache_key, content_hash, modality, model, dimensions,
+                preprocessing_version, vector_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(cache_key) DO UPDATE SET
+                 vector_json=excluded.vector_json,
+                 dimensions=excluded.dimensions,
+                 last_used_at=CURRENT_TIMESTAMP""",
+            (
+                cache_key,
+                content_hash,
+                modality,
+                model,
+                dimensions,
+                preprocessing_version,
+                json.dumps(vector),
+            ),
+        )
+        # A provider response becomes recoverable before evidence insertion.
+        self.db.commit()
+
     def embedding_records(self, modality: str, model: str) -> list[tuple[str, list[float]]]:
         rows = self.db.execute(
             "SELECT evidence_id, vector_json FROM evidence_embeddings WHERE modality = ? AND model = ? ORDER BY evidence_id",

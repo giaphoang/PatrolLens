@@ -54,14 +54,18 @@ class FakeMultimodalEmbedding:
 
     def __init__(self):
         self.encoder = HashEmbeddingEncoder(dimensions=4, model_name=self.model_name)
+        self.text_inputs = []
+        self.media_inputs = []
 
     def encode_text(self, text):
         return self.encoder.encode_text(text)
 
     def encode_texts(self, texts):
+        self.text_inputs.extend(texts)
         return [self.encode_text(text) for text in texts]
 
     def encode_media_many(self, paths, *, context_texts=None):
+        self.media_inputs.extend(str(path) for path in paths)
         return [self.encoder.encode_text(f"media {path}") for path in paths]
 
 
@@ -106,7 +110,7 @@ def test_synthetic_ingestion_to_multimodal_retrieval(tmp_path):
 
     _plan, candidates = retriever.retrieve("Find when the person in the red shirt started shouting")
 
-    assert stats["visual"] >= 2
+    assert stats["visual"] == 1
     assert stats["transcript"] == 1
     assert stats["ocr"] >= 2
     assert stats["audio"] >= 2
@@ -150,8 +154,10 @@ def test_gemini_embedding_ingestion_keeps_exact_text_and_indexes_all_modalities(
         vector_index=SQLiteVectorIndex(store),
     ).ingest_path(source)
 
-    assert stats["video_embeddings"] == stats["segments"]
-    assert stats["image_embeddings"] == stats["segments"]
+    assert stats["video_embeddings"] == 0
+    assert stats["image_embeddings"] == 1
+    assert stats["sampled_frames"] >= 2
+    assert stats["deduplicated_frames"] == stats["sampled_frames"] - 1
     assert stats["transcript"] == 1
     assert stats["ocr"] >= 2
     assert stats["audio"] >= 2
@@ -160,7 +166,6 @@ def test_gemini_embedding_ingestion_keeps_exact_text_and_indexes_all_modalities(
         + stats["image_embeddings"]
         + stats["transcript"]
         + stats["ocr"]
-        + stats["audio"]
     )
     assert store.ingestion_status(
         stats["video_id"], stats["fingerprint"]
@@ -171,5 +176,31 @@ def test_gemini_embedding_ingestion_keeps_exact_text_and_indexes_all_modalities(
     )
     assert len(store.embedding_records("transcript", embedding.model_name)) == stats["transcript"]
     assert len(store.embedding_records("ocr", embedding.model_name)) == stats["ocr"]
-    assert len(store.embedding_records("audio_event", embedding.model_name)) == stats["audio"]
+    assert len(store.embedding_records("audio_event", embedding.model_name)) == 0
+    assert all(path.endswith(".jpg") for path in embedding.media_inputs)
+    assert stats["embedding_cache_hits"] >= 1
+
+    calls_before_retry = (len(embedding.text_inputs), len(embedding.media_inputs))
+    retried = IngestionPipeline(
+        store,
+        backends=IngestionBackends(
+            asr=FakeASR(),
+            ocr=FakeOCR(),
+            audio=FakeAudio(),
+            embedding=embedding,
+        ),
+        config=IngestionConfig(
+            window_ms=2_000,
+            stride_ms=1_000,
+            frame_step_ms=1_000,
+            audio_window_ms=2_000,
+            audio_stride_ms=1_000,
+            embedding_dimensions=4,
+            embedding_batch_size=2,
+        ),
+        vector_index=SQLiteVectorIndex(store),
+    ).ingest_path(source, force=True)
+    assert (len(embedding.text_inputs), len(embedding.media_inputs)) == calls_before_retry
+    assert retried["embedding_cache_misses"] == 0
+    assert retried["embedding_cache_hits"] == retried["embedding_vectors"]
     store.close()

@@ -1,6 +1,6 @@
 """PostgreSQL schema for traceable evidence and pgvector embeddings."""
 
-POSTGRES_SCHEMA_VERSION = "1.0.0"
+POSTGRES_SCHEMA_VERSION = "1.2.0"
 
 POSTGRES_SCHEMA = """
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -71,7 +71,10 @@ CREATE TABLE IF NOT EXISTS pl_embeddings (
   evidence_hash TEXT NOT NULL,
   source_sha256 TEXT NOT NULL,
   embedding_hash TEXT NOT NULL,
-  embedding vector NOT NULL,
+  -- Legacy vectors remain here until the 768-dimensional migration is
+  -- validated. New production vectors are stored in embedding_768.
+  embedding vector,
+  embedding_768 vector(768),
   dimensions INTEGER NOT NULL CHECK (dimensions > 0),
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -81,6 +84,34 @@ CREATE INDEX IF NOT EXISTS pl_embeddings_lookup
   ON pl_embeddings(modality, model_version, dimensions);
 CREATE INDEX IF NOT EXISTS pl_embeddings_evidence
   ON pl_embeddings(evidence_id);
+
+-- Durable provider-response cache. It is intentionally independent from
+-- evidence foreign keys so a forced rerun can delete/rebuild evidence without
+-- paying to embed identical source content again.
+CREATE TABLE IF NOT EXISTS pl_embedding_cache (
+  cache_key TEXT PRIMARY KEY,
+  content_hash TEXT NOT NULL,
+  modality TEXT NOT NULL,
+  model_version TEXT NOT NULL,
+  dimensions INTEGER NOT NULL CHECK (dimensions = 768),
+  preprocessing_version TEXT NOT NULL,
+  embedding vector(768) NOT NULL,
+  embedding_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_used_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS pl_embedding_cache_lookup
+  ON pl_embedding_cache(content_hash, modality, model_version, dimensions, preprocessing_version);
+
+-- Existing installations created before the 768 migration need the same
+-- nullable legacy column and the fixed-width production column.
+ALTER TABLE pl_embeddings
+  ALTER COLUMN embedding DROP NOT NULL;
+ALTER TABLE pl_embeddings
+  ADD COLUMN IF NOT EXISTS embedding_768 vector(768);
+CREATE INDEX IF NOT EXISTS pl_embeddings_embedding_768_hnsw
+  ON pl_embeddings USING hnsw (embedding_768 vector_cosine_ops)
+  WHERE embedding_768 IS NOT NULL;
 
 -- Protect the duplicated audit fields even if a future writer bypasses the
 -- Python store. Updates to canonical evidence are reflected by the same

@@ -6,12 +6,14 @@ import subprocess
 import pytest
 
 from patrol_lens.adapters.media import (
+    deduplicate_keyframes,
     extract_audio_segment,
     extract_clip,
     extract_frame,
     iter_segments,
     probe_video,
 )
+from PIL import Image
 from patrol_lens.config import IngestionConfig
 from patrol_lens.domain import Evidence, VideoAsset
 from patrol_lens.index import IndexStore
@@ -53,6 +55,28 @@ def test_changed_ingestion_fingerprint_supersedes_stale_evidence(tmp_path):
     assert store.get_evidence("stale") is None
     assert store.ingestion_status("v1", first_stats["fingerprint"])["status"] == "superseded"
     store.close()
+
+
+def test_adjacent_equivalent_frames_extend_one_keyframe_interval(tmp_path):
+    frames = []
+    for ordinal, color in enumerate(("red", "red", "red", "blue")):
+        path = tmp_path / f"frame-{ordinal}.png"
+        Image.new("RGB", (32, 32), color).save(path)
+        frames.append((ordinal * 1_000, path))
+
+    keyframes = deduplicate_keyframes(
+        frames,
+        frame_step_ms=1_000,
+        duration_ms=4_000,
+    )
+
+    assert len(keyframes) == 2
+    assert (keyframes[0].start_ms, keyframes[0].end_ms, keyframes[0].frame_count) == (
+        0,
+        3_000,
+        3,
+    )
+    assert (keyframes[1].start_ms, keyframes[1].end_ms) == (3_000, 4_000)
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="FFmpeg unavailable")

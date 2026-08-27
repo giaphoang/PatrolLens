@@ -8,6 +8,7 @@ import shlex
 import shutil
 import sys
 from dataclasses import replace
+from pathlib import Path
 
 from .adapters.asr import FasterWhisperASR
 from .adapters.audio import (
@@ -18,11 +19,14 @@ from .adapters.audio import (
 )
 from .adapters.media import iter_video_files
 from .adapters.ocr import PaddleOCRBackend
-from .adapters.openrouter import OpenRouterEmbeddingClient, OpenRouterJSONClient
+from .adapters.openrouter import (
+    EmbeddingDimensionError,
+    OpenRouterEmbeddingClient,
+    OpenRouterJSONClient,
+)
 from .adapters.visual import SigLIP2Encoder
 from .agent import ActivePerceptionAgent, GeminiActivePolicy
 from .config import (
-    DEFAULT_GEMINI_EMBEDDING_BATCH_MODEL,
     DEFAULT_GEMINI_EMBEDDING_MODEL,
     DEFAULT_GEMINI_MODEL,
     AgentConfig,
@@ -44,6 +48,25 @@ def _print(payload: object) -> None:
 
 Store = IndexStore | PostgresIndexStore
 VectorIndex = AutoVectorIndex | PostgresVectorIndex
+
+
+def _load_project_env() -> None:
+    """Load the nearest repository ``.env`` before CLI defaults are parsed.
+
+    ``override=True`` is intentional: the local project file is the
+    authoritative configuration for this CLI, which prevents a stale
+    OPENROUTER_API_KEY exported by an older shell from being selected.
+    """
+
+    try:
+        from dotenv import find_dotenv, load_dotenv
+    except ImportError as exc:
+        raise RuntimeError(
+            "python-dotenv is not installed; run uv sync before using the CLI"
+        ) from exc
+    dotenv_path = find_dotenv(usecwd=True)
+    if dotenv_path:
+        load_dotenv(dotenv_path, override=True)
 
 
 def _open_store(args: argparse.Namespace) -> Store:
@@ -68,10 +91,13 @@ def _gemini(model: str, args: argparse.Namespace) -> OpenRouterJSONClient:
 
 
 def _embedding(args: argparse.Namespace) -> OpenRouterEmbeddingClient:
+    model = os.getenv("PATROLLENS_EMBEDDING_MODEL", DEFAULT_GEMINI_EMBEDDING_MODEL)
+    query_model = os.getenv("PATROLLENS_EMBEDDING_QUERY_MODEL", model)
     return OpenRouterEmbeddingClient(
-        model=args.embedding_model,
-        batch_model=args.embedding_batch_model,
-        query_model=args.embedding_query_model,
+        model=model,
+        # Ingestion uses the synchronous embeddings endpoint. The client
+        # defaults the document/media route to the same canonical model.
+        query_model=query_model,
         dimensions=args.embedding_dimensions,
         base_url=args.openrouter_base_url,
         http_referer=args.openrouter_http_referer,
@@ -80,10 +106,20 @@ def _embedding(args: argparse.Namespace) -> OpenRouterEmbeddingClient:
     )
 
 
+def _embedding_canary(embedding: OpenRouterEmbeddingClient) -> None:
+    """Verify the provider's output size before ingestion can write evidence."""
+
+    vector = embedding.encode_text("PatrolLens embedding dimension canary")
+    if len(vector) != embedding.dimensions:
+        raise EmbeddingDimensionError(embedding.dimensions, len(vector))
+
+
 def _ingestion_backends(args: argparse.Namespace) -> IngestionBackends:
     if args.profile == "metadata":
         return IngestionBackends()
     embedding = None if args.no_embeddings else _embedding(args)
+    if embedding is not None:
+        _embedding_canary(embedding)
     visual = (
         None
         if args.no_visual or embedding is not None
@@ -117,6 +153,8 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         raise ValueError("--embedding-batch-size must be positive")
     if args.embedding_dimensions <= 0 or args.embedding_dimensions > 3072:
         raise ValueError("--embedding-dimensions must be between 1 and 3072")
+    if args.backend == "postgres" and args.embedding_dimensions != 768:
+        raise ValueError("PostgreSQL ingestion requires --embedding-dimensions 768")
     with _open_store(args) as store:
         config = IngestionConfig(
             window_ms=round(args.window_s * 1000),
@@ -127,7 +165,6 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             batch_size=args.batch_size,
             embedding_dimensions=args.embedding_dimensions,
             embedding_batch_size=args.embedding_batch_size,
-            embed_video=not args.no_visual and not args.no_embedding_video,
             embed_images=not args.no_visual and not args.no_embedding_images,
         )
         pipeline = IngestionPipeline(
@@ -143,12 +180,40 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         _print({"index": str(store.root), "videos": stats})
 
 
+def cmd_migrate_embeddings(args: argparse.Namespace) -> None:
+    if args.backend != "postgres":
+        raise ValueError("embedding migration requires --backend postgres")
+    if args.embedding_dimensions != 768:
+        raise ValueError("embedding migration is fixed at 768 dimensions")
+    if args.embedding_batch_size <= 0:
+        raise ValueError("--embedding-batch-size must be positive")
+    with _open_store(args) as store:
+        if not isinstance(store, PostgresIndexStore):
+            raise TypeError("embedding migration requires a PostgreSQL store")
+        embedding = _embedding(args)
+        _embedding_canary(embedding)
+        stats = store.migrate_embeddings_768(
+            embedding,
+            batch_size=args.embedding_batch_size,
+        )
+        _print(
+            {
+                "index": str(store.root),
+                "model": embedding.model_name,
+                "dimensions": 768,
+                **stats,
+            }
+        )
+
+
 def _build_retriever(
     args: argparse.Namespace,
     store: Store,
     *,
     client: OpenRouterJSONClient | None = None,
 ) -> CoarseRetriever:
+    if isinstance(store, PostgresIndexStore) and args.embedding_dimensions != 768:
+        raise ValueError("PostgreSQL retrieval requires --embedding-dimensions 768")
     if args.planner == "gemini":
         client = client or _gemini(args.planner_model, args)
         planner = GeminiQueryPlanner(client, model=args.planner_model)
@@ -267,28 +332,12 @@ def _add_ingest_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--profile", choices=["full", "core", "metadata"], default="core")
     _add_openrouter_transport_arguments(parser)
     parser.add_argument(
-        "--embedding-model",
-        default=os.getenv("PATROLLENS_EMBEDDING_MODEL", DEFAULT_GEMINI_EMBEDDING_MODEL),
-        help="Canonical Gemini Embedding 2 model namespace",
-    )
-    parser.add_argument(
-        "--embedding-batch-model",
-        default=os.getenv("PATROLLENS_EMBEDDING_BATCH_MODEL", DEFAULT_GEMINI_EMBEDDING_BATCH_MODEL),
-        help="OpenRouter model variant used for offline document/media batches",
-    )
-    parser.add_argument(
-        "--embedding-query-model",
-        default=os.getenv("PATROLLENS_EMBEDDING_QUERY_MODEL", DEFAULT_GEMINI_EMBEDDING_MODEL),
-        help="Model used to embed investigator queries",
-    )
-    parser.add_argument(
         "--embedding-dimensions",
         type=int,
-        default=int(os.getenv("PATROLLENS_EMBEDDING_DIMENSIONS", "3072")),
+        default=int(os.getenv("PATROLLENS_EMBEDDING_DIMENSIONS", "768")),
     )
     parser.add_argument("--embedding-batch-size", type=int, default=6)
     parser.add_argument("--no-embeddings", action="store_true")
-    parser.add_argument("--no-embedding-video", action="store_true")
     parser.add_argument("--no-embedding-images", action="store_true")
     parser.add_argument("--visual-model", default="google/siglip2-base-patch16-224")
     parser.add_argument("--asr-model", default="large-v3-turbo")
@@ -320,21 +369,9 @@ def _add_retrieval_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--visual-model", default="google/siglip2-base-patch16-224")
     parser.add_argument("--no-visual", action="store_true")
     parser.add_argument(
-        "--embedding-model",
-        default=os.getenv("PATROLLENS_EMBEDDING_MODEL", DEFAULT_GEMINI_EMBEDDING_MODEL),
-    )
-    parser.add_argument(
-        "--embedding-batch-model",
-        default=os.getenv("PATROLLENS_EMBEDDING_BATCH_MODEL", DEFAULT_GEMINI_EMBEDDING_BATCH_MODEL),
-    )
-    parser.add_argument(
-        "--embedding-query-model",
-        default=os.getenv("PATROLLENS_EMBEDDING_QUERY_MODEL", DEFAULT_GEMINI_EMBEDDING_MODEL),
-    )
-    parser.add_argument(
         "--embedding-dimensions",
         type=int,
-        default=int(os.getenv("PATROLLENS_EMBEDDING_DIMENSIONS", "3072")),
+        default=int(os.getenv("PATROLLENS_EMBEDDING_DIMENSIONS", "768")),
     )
     parser.add_argument("--no-embeddings", action="store_true")
     parser.add_argument("--device", default="cpu")
@@ -404,7 +441,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_retrieval_arguments(search)
     search.add_argument("--model", default=os.getenv("PATROLLENS_GEMINI_MODEL", DEFAULT_GEMINI_MODEL))
     search.add_argument("--max-candidates", type=int, default=12)
-    search.add_argument("--max-turns", type=int, default=6)
+    search.add_argument("--max-turns", type=int, default=5)
     search.add_argument("--coarse-only", action="store_true")
     search.add_argument("--timelens-command")
     search.add_argument("--acknowledge-timelens-license", action="store_true")
@@ -416,12 +453,23 @@ def build_parser() -> argparse.ArgumentParser:
     _add_retrieval_arguments(evaluate)
     evaluate.set_defaults(func=cmd_evaluate)
 
+    migrate = commands.add_parser(
+        "migrate-embeddings",
+        help="Re-embed PostgreSQL source evidence into the 768-dimensional index",
+    )
+    _add_storage_arguments(migrate)
+    _add_openrouter_transport_arguments(migrate)
+    migrate.add_argument("--embedding-dimensions", type=int, default=768)
+    migrate.add_argument("--embedding-batch-size", type=int, default=6)
+    migrate.set_defaults(func=cmd_migrate_embeddings)
+
     doctor = commands.add_parser("doctor", help="Report optional runtime capabilities")
     doctor.set_defaults(func=cmd_doctor)
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
+    _load_project_env()
     args = build_parser().parse_args(argv)
     try:
         args.func(args)

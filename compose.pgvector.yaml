@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: patrol_lens
       POSTGRES_PASSWORD: patrol_lens
     ports:
-      - "5432:5432"
+      - "5435:5432"
     volumes:
       - patrol_lens_pgdata:/var/lib/postgresql/data
 

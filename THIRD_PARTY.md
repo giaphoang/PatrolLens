@@ -21,11 +21,11 @@ PatrolLens uses Gemini as the policy and implements its own controller, schemas,
 ### Gemini Embedding 2
 
 - API: <https://openrouter.ai/docs/api/api-reference/embeddings/submit-an-embedding-request>
-- Models: `google/gemini-embedding-2` for query vectors and `google/gemini-embedding-2:batch` for offline indexing.
+- Ingestion uses `google/gemini-embedding-2` for synchronous document and media vectors; queries use the same model by default.
 - The embedding adapter sends text, image, audio, and video inputs to the OpenRouter embeddings endpoint and stores the canonical model namespace with every vector.
 - Whisper and PaddleOCR remain local evidence producers: their exact transcript/OCR strings are kept in FTS5 and are also optionally embedded for semantic recall.
-- The default vector size is 3,072 dimensions and can be changed with `PATROLLENS_EMBEDDING_DIMENSIONS`; changing dimensions or model namespaces requires a new ingestion fingerprint.
-- The `:batch` suffix is an OpenRouter model route used for discounted offline embedding calls. It is not an asynchronous job queue; ingestion still records each returned vector transactionally with its timestamped evidence.
+- The production vector size is 768 dimensions and is configured with `PATROLLENS_EMBEDDING_DIMENSIONS`; changing dimensions or model namespaces requires a new ingestion fingerprint.
+- `google/gemini-embedding-2:batch` is reserved for a future asynchronous text-only Batch API path and is not used by current ingestion. Multimodal image, audio, and video inputs remain on the synchronous embeddings endpoint.
 
 ## PostgreSQL and pgvector
 

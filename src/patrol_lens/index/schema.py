@@ -54,6 +54,20 @@ CREATE TABLE IF NOT EXISTS evidence_embeddings (
 CREATE INDEX IF NOT EXISTS idx_evidence_embeddings_namespace
   ON evidence_embeddings(modality, model);
 
+CREATE TABLE IF NOT EXISTS embedding_cache (
+  cache_key TEXT PRIMARY KEY,
+  content_hash TEXT NOT NULL,
+  modality TEXT NOT NULL,
+  model TEXT NOT NULL,
+  dimensions INTEGER NOT NULL,
+  preprocessing_version TEXT NOT NULL,
+  vector_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_embedding_cache_lookup
+  ON embedding_cache(content_hash, modality, model, dimensions, preprocessing_version);
+
 CREATE TABLE IF NOT EXISTS metadata (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL

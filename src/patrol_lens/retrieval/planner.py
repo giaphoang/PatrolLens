@@ -120,6 +120,8 @@ class HeuristicQueryPlanner:
             relation=relation,
             target=target,
             constraints={"all_instances": bool(re.search(r"\b(all|every)\b", lowered))},
+            target_boundary=target,
+            requires_video_verification=True,
         )
 
 
@@ -147,6 +149,8 @@ PLAN_SCHEMA: dict[str, Any] = {
         "relation": {"type": "string", "enum": ["overlap", "before", "after", "sequence", "any"]},
         "relation_tolerance_ms": {"type": "integer", "minimum": 0, "maximum": 30000},
         "target": {"type": "string"},
+        "target_boundary": {"type": "string", "enum": ["event", "onset", "offset"]},
+        "requires_video_verification": {"type": "boolean"},
         "constraints": {
             "type": "object",
             "properties": {
@@ -160,7 +164,7 @@ PLAN_SCHEMA: dict[str, Any] = {
     "required": [
         "visual_queries", "transcript_queries", "ocr_queries", "audio_queries",
         "required_modalities", "modality_weights", "relation", "relation_tolerance_ms",
-        "target", "constraints",
+        "target", "target_boundary", "requires_video_verification", "constraints",
     ],
     "additionalProperties": False,
 }
@@ -179,7 +183,9 @@ OCR means literal visible text; ASR/transcript means spoken words; audio_event m
 non-lexical sound or prosody; visual means appearance/action. Mark modalities required
 only when the complete query logically requires their conjunction. Use '*' for OCR when
 the user asks to discover unknown text such as every license plate. Retrieval finds
-candidates; a later Gemini verifier decides whether the event truly occurred.
+candidates; a later Gemini verifier decides whether the event truly occurred. Set
+requires_video_verification for entity/action/attribution claims, and use an onset
+target_boundary when the investigator asks when something started.
 
 Investigator query: {query}"""
         try:
@@ -208,4 +214,6 @@ Investigator query: {query}"""
             relation_tolerance_ms=min(30_000, max(0, int(data.get("relation_tolerance_ms", 4_000)))),
             target=str(data.get("target", "event")),
             constraints=dict(data.get("constraints", {})),
+            target_boundary=str(data.get("target_boundary", data.get("target", "event"))),
+            requires_video_verification=bool(data.get("requires_video_verification", True)),
         )

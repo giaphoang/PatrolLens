@@ -5,11 +5,119 @@ import json
 import shutil
 import subprocess
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
+
+from PIL import Image
 
 from ..domain import Segment, VideoAsset
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+
+
+@dataclass(frozen=True)
+class VisualKeyframe:
+    """One canonical image covering a locally deduplicated temporal interval."""
+
+    timestamp_ms: int
+    start_ms: int
+    end_ms: int
+    path: Path
+    perceptual_hash: str
+    frame_count: int
+
+
+def perceptual_hash(path: str | Path, *, hash_size: int = 8) -> str:
+    """Return a compact difference hash suitable for near-duplicate frames."""
+
+    if hash_size <= 0:
+        raise ValueError("hash_size must be positive")
+    resampling = getattr(Image, "Resampling", Image).LANCZOS
+    with Image.open(path) as image:
+        average_rgb = image.convert("RGB").resize((1, 1), resampling).getpixel((0, 0))
+        grayscale = image.convert("L").resize((hash_size + 1, hash_size), resampling)
+        pixel_reader = getattr(grayscale, "get_flattened_data", grayscale.getdata)
+        pixels = list(pixel_reader())
+    value = 0
+    for row in range(hash_size):
+        row_start = row * (hash_size + 1)
+        for column in range(hash_size):
+            value = (value << 1) | int(
+                pixels[row_start + column] > pixels[row_start + column + 1]
+            )
+    color = "".join(f"{channel:02x}" for channel in average_rgb)
+    return f"{value:0{hash_size * hash_size // 4}x}{color}"
+
+
+def perceptual_hash_distance(left: str, right: str) -> int:
+    """Return Hamming distance between two equal-width hexadecimal hashes."""
+
+    if len(left) != len(right):
+        raise ValueError("perceptual hashes must have the same width")
+    return (int(left, 16) ^ int(right, 16)).bit_count()
+
+
+def deduplicate_keyframes(
+    frames: list[tuple[int, Path]],
+    *,
+    frame_step_ms: int,
+    duration_ms: int,
+    duplicate_distance: int = 8,
+    scene_change_distance: int = 18,
+) -> list[VisualKeyframe]:
+    """Cluster adjacent, visually equivalent samples before remote embedding.
+
+    A cluster keeps the first image as its canonical source and extends its
+    interval while subsequent samples remain close to both the previous frame
+    and the canonical frame. This preserves temporal coverage without sending
+    overlapping or duplicate image content to an embedding provider.
+    """
+
+    if frame_step_ms <= 0:
+        raise ValueError("frame_step_ms must be positive")
+    if duplicate_distance < 0 or scene_change_distance < 0:
+        raise ValueError("visual hash distances must be non-negative")
+    if not frames:
+        return []
+
+    hashed = [(timestamp_ms, path, perceptual_hash(path)) for timestamp_ms, path in frames]
+    clusters: list[VisualKeyframe] = []
+    canonical_timestamp, canonical_path, canonical_hash = hashed[0]
+    previous_hash = canonical_hash
+    last_timestamp = canonical_timestamp
+    frame_count = 1
+
+    def append_cluster() -> None:
+        clusters.append(
+            VisualKeyframe(
+                timestamp_ms=canonical_timestamp,
+                start_ms=canonical_timestamp,
+                end_ms=min(duration_ms, last_timestamp + frame_step_ms),
+                path=canonical_path,
+                perceptual_hash=canonical_hash,
+                frame_count=frame_count,
+            )
+        )
+
+    for timestamp_ms, path, frame_hash in hashed[1:]:
+        same_content = (
+            perceptual_hash_distance(canonical_hash, frame_hash) <= duplicate_distance
+            and perceptual_hash_distance(previous_hash, frame_hash) <= scene_change_distance
+        )
+        if same_content:
+            last_timestamp = timestamp_ms
+            previous_hash = frame_hash
+            frame_count += 1
+            continue
+        append_cluster()
+        canonical_timestamp = timestamp_ms
+        canonical_path = path
+        canonical_hash = frame_hash
+        previous_hash = frame_hash
+        last_timestamp = timestamp_ms
+        frame_count = 1
+    append_cluster()
+    return clusters
 
 
 def _tool(name: str) -> str:

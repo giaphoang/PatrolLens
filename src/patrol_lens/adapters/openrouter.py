@@ -9,13 +9,21 @@ from pathlib import Path
 from typing import Any
 
 from ..config import (
-    DEFAULT_GEMINI_EMBEDDING_BATCH_MODEL,
     DEFAULT_GEMINI_EMBEDDING_MODEL,
     DEFAULT_GEMINI_MODEL,
 )
 
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MAX_INLINE_MEDIA_BYTES = 18 * 1024 * 1024
+
+
+class EmbeddingDimensionError(RuntimeError):
+    """Raised when a provider returns a vector of the wrong size."""
+
+    def __init__(self, expected: int, actual: int) -> None:
+        self.expected = expected
+        self.actual = actual
+        super().__init__(f"Expected {expected}, got {actual}")
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -249,9 +257,9 @@ class OpenRouterEmbeddingClient:
     """OpenRouter client for Gemini Embedding 2 text and media vectors.
 
     ``model_name`` is the canonical model namespace stored with an embedding.
-    Offline document/media calls use OpenRouter's cheaper ``:batch`` model
-    variant, while query calls use the canonical model slug. Both routes are
-    expected to produce vectors in the same Gemini Embedding 2 space.
+    The synchronous embeddings endpoint is the safe default for both offline
+    inputs and queries. Callers may explicitly provide a ``:batch`` model for
+    a separate asynchronous Batch API implementation.
 
     OpenRouter's embeddings endpoint represents multimodal input as an input
     object containing a ``content`` array. The object is deliberately kept at
@@ -280,11 +288,11 @@ class OpenRouterEmbeddingClient:
             raise ValueError("embedding media batch size must be positive")
         self.model_name = model.removesuffix(":batch")
         self.query_model = query_model or self.model_name
-        self.batch_model = batch_model or (
-            DEFAULT_GEMINI_EMBEDDING_BATCH_MODEL
-            if self.model_name == DEFAULT_GEMINI_EMBEDDING_MODEL
-            else (model if model.endswith(":batch") else f"{self.model_name}:batch")
-        )
+        # ``:batch`` models are not accepted by the synchronous
+        # ``/api/v1/embeddings`` endpoint. Keep sync ingestion safe by using
+        # the canonical model unless a caller explicitly opts into a separate
+        # Batch API transport.
+        self.batch_model = batch_model or self.model_name
         self.dimensions = dimensions
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         self.base_url = base_url or os.getenv("PATROLLENS_OPENROUTER_BASE_URL", DEFAULT_OPENROUTER_BASE_URL)
@@ -341,6 +349,11 @@ class OpenRouterEmbeddingClient:
             "input": inputs[0] if single_text else inputs,
             "dimensions": self.dimensions,
             "encoding_format": "float",
+            # OpenRouter documents the OpenAI-compatible ``dimensions`` field,
+            # while Gemini's native API names the same control
+            # ``output_dimensionality``. Send both so the selected Google
+            # provider cannot silently fall back to its 3072 default.
+            "extra_body": {"output_dimensionality": self.dimensions},
         }
         headers = self._embedding_headers()
         if headers:
@@ -363,9 +376,7 @@ class OpenRouterEmbeddingClient:
             if not all(math.isfinite(value) for value in vector):
                 raise RuntimeError("OpenRouter returned a non-finite embedding vector")
             if len(vector) != self.dimensions:
-                raise RuntimeError(
-                    f"OpenRouter returned {len(vector)} dimensions; expected {self.dimensions}"
-                )
+                raise EmbeddingDimensionError(self.dimensions, len(vector))
             vectors.append(vector)
         return vectors
 
@@ -387,7 +398,7 @@ class OpenRouterEmbeddingClient:
         )[0]
 
     def encode_texts(self, texts: list[str]) -> list[list[float]]:
-        """Encode document text in a discounted offline batch request."""
+        """Encode document text using the configured synchronous model."""
 
         if not texts:
             return []

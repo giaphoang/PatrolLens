@@ -7,7 +7,7 @@ name = "patrol-lens"
 version = "0.2.0"
 description = "Retrieval-guided Gemini active perception for body-worn camera search"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["pillow>=10", "python-dotenv>=1.0"]
 
 [project.optional-dependencies]
 openrouter = ["openai>=1.0"]

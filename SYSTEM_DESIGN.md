@@ -28,7 +28,8 @@ flowchart LR
 
     subgraph OFF["1. Offline multimodal ingestion"]
         E["Whisper / PaddleOCR / local audio cues"]
-        GE["OpenRouter Gemini Embedding 2 :batch\ntext · image · audio · video"]
+        SC["Local scene/change detection\nkeyframes + pHash dedup"]
+        GE["OpenRouter Gemini Embedding 2\nunique images + ASR/OCR text · 768-d"]
         IDX["Timestamped evidence index"]
     end
 
@@ -50,7 +51,7 @@ flowchart LR
     OUT["video + [start,end]<br/>confidence + evidence"]
 
     V --> E --> IDX
-    V --> GE --> IDX
+    V --> SC --> GE --> IDX
     Q["Investigator query"] --> QP --> SEARCH
     IDX --> SEARCH --> FUSE --> GEM
     GEM --> TOOLS --> MEM --> GEM
@@ -68,9 +69,10 @@ SQLite/FAISS remains useful for a dependency-light local smoke test. The product
 flowchart LR
     R["Raw source video"] --> X["FFmpeg / local model extraction"]
     X --> E["Canonical pl_evidence\ncontent + timestamp + metadata + hash"]
-    E --> G["Gemini Embedding 2 :batch\ntext · image · audio · video"]
+    E --> G["Gemini Embedding 2\nunique images + ASR/OCR text\n768-d only"]
+    G --> C["pl_embedding_cache\ndurable content checkpoint"]
     E --> T["ACID evidence/embedding transaction"]
-    G --> T
+    C --> T
     T --> V["pl_embeddings\nvector + copied provenance + evidence FK"]
     Q["Query vector"] --> S["pgvector cosine ORDER BY"]
     S --> V
@@ -80,7 +82,7 @@ flowchart LR
 
 `pl_embeddings` intentionally duplicates the fields required to replay a hit: `video_id`, `segment_id`, `start_ms`, `end_ms`, `modality`, `source_uri`, `evidence_text`, `evidence_metadata`, `evidence_source`, `model_version`, `confidence`, `evidence_hash`, `source_sha256`, and `embedding_hash`. It also retains a foreign key to `pl_evidence`. The write path obtains the duplicated fields with `INSERT ... SELECT` from `pl_evidence JOIN pl_assets`, so an embedding cannot be created for missing evidence or an unknown video.
 
-The ingestion pipeline calls `add_evidence_and_embeddings` for each visual batch. PostgreSQL commits the evidence and vectors together; a failed vector insert rolls back the evidence batch instead of leaving untraceable rows. A database trigger validates duplicated provenance on direct writes and synchronizes it when canonical evidence or asset metadata changes. Vector dimensions are stored per row, and a partial HNSW expression index is created for each observed dimension; the query filters by modality, model version, and dimension before ordering by cosine distance. This follows pgvector's expression-index pattern for variable-dimension columns.
+The ingestion pipeline validates every provider response and immediately commits it to `pl_embedding_cache`, keyed by content hash, modality, model, dimensions, and preprocessing version. It then calls `add_evidence_and_embeddings` in small batches. A failed evidence insert can therefore be retried without another provider call. A database trigger validates duplicated provenance on direct writes and synchronizes it when canonical evidence or asset metadata changes. New PostgreSQL reads and writes are fixed at 768 dimensions and use the partial `pl_embeddings_embedding_768_hnsw` cosine index; legacy vectors remain audit-only during migration.
 
 At retrieval time, pgvector returns the embedding row directly. The adapter reconstructs `Evidence` from that row and attaches `embedding_id`, `source_uri`, `model_version`, `evidence_hash`, `source_sha256`, and `embedding_hash` to the returned metadata. A caller can use `get_embedding_trace(embedding_id)` to retrieve the complete vector/provenance record for replay or audit.
 
@@ -89,33 +91,31 @@ At retrieval time, pgvector returns the embedding row directly. The adapter reco
 ```mermaid
 flowchart LR
     V["Bodycam MP4"] --> PROBE["FFprobe<br/>duration · FPS · streams"]
-    PROBE --> SEG["16 s windows<br/>8 s stride"]
+    PROBE --> SEG["Overlapping temporal windows<br/>local join context only"]
     PROBE --> AUDIO["Decode 16 kHz mono once"]
     PROBE --> FRAMES["Decode frame sequence once<br/>~1 FPS"]
 
-    SEG --> VIDEO_EMB["Gemini Embedding 2<br/>video chunks"]
-    SEG --> KEYFRAMES["Representative keyframes"]
+    FRAMES --> CHANGE["Perceptual scene/change detection"]
+    CHANGE --> KEYFRAMES["Canonical keyframes"]
+    KEYFRAMES --> DEDUP["pHash visual dedup<br/>extend equivalent intervals"]
     AUDIO --> ASR["faster-whisper<br/>large-v3-turbo"]
-    AUDIO --> AUDIO_EMB["Gemini Embedding 2<br/>audio chunks"]
     AUDIO --> VAD["Silero VAD"]
     AUDIO --> PROSODY["RMS + pitch"]
     AUDIO --> EVENTS["YAMNet"]
-    FRAMES --> IMAGE_EMB["Gemini Embedding 2<br/>image embeddings"]
+    DEDUP --> IMAGE_EMB["Gemini Embedding 2<br/>unique image embeddings · 768-d"]
     FRAMES --> OCR["PaddleOCR"]
 
-    ASR --> FTS["SQLite FTS5"]
+    ASR --> FTS["Postgres FTS / SQLite FTS5"]
     ASR --> TEXT_EMB["Gemini Embedding 2<br/>transcript embeddings"]
     OCR --> FTS
     OCR --> OCR_EMB["Gemini Embedding 2<br/>OCR embeddings"]
-    VAD --> SQL["SQLite evidence"]
+    VAD --> SQL["Local audio evidence rows"]
     PROSODY --> SQL
     EVENTS --> SQL
-    KEYFRAMES --> IMAGE_EMB
-    VIDEO_EMB --> VEC["pgvector / FAISS<br/>unified vector space"]
-    IMAGE_EMB --> VEC
-    AUDIO_EMB --> VEC
-    TEXT_EMB --> VEC
-    OCR_EMB --> VEC
+    IMAGE_EMB --> CACHE["Content-hash embedding cache"]
+    TEXT_EMB --> CACHE
+    OCR_EMB --> CACHE
+    CACHE --> VEC["pgvector / FAISS<br/>768-d semantic vectors"]
     FTS --> META["Canonical timestamps + provenance"]
     SQL --> META
     VEC --> META
@@ -125,16 +125,16 @@ flowchart LR
 
 | Requirement | Component | Resolution |
 |---|---|---|
-| Visual appearance and cross-modal media | Gemini Embedding 2 | Unified semantic search over video chunks, images, audio, transcript, and OCR |
+| Visual appearance | Gemini Embedding 2 | Shared semantic search over locally deduplicated keyframe images |
 | Spoken language | faster-whisper | Word/utterance timestamps for Miranda rights, commands, names, and quotations |
 | Visible writing | PaddleOCR | Literal plate/sign/badge text with frame timestamps and confidence |
 | Voice/prosody | Silero + RMS/pitch | Speech presence and raised-intensity cues without pretending loudness proves speaker identity |
 | Non-speech sound | YAMNet | Candidate cues for sirens, gunshots, barking, alarms, and related AudioSet events |
-| Exact text lookup | SQLite FTS5/BM25 | Fast local ASR/OCR/audio-label retrieval, preserving literal strings |
-| Semantic lookup | pgvector / FAISS | Cosine/IP search over Gemini Embedding 2 vectors from every indexed modality |
-| Provenance | SQLite | Model, confidence, media path, exact time span, and processing fingerprint |
+| Exact text lookup | Postgres FTS / SQLite FTS5 | Fast ASR/OCR/audio-label retrieval, preserving literal strings |
+| Semantic lookup | pgvector / FAISS | Cosine/IP search over 768-d image, transcript, and OCR vectors |
+| Provenance | PostgreSQL | Model, confidence, source reference/hash, exact time span, and processing fingerprint |
 
-Processing windows organize work; they are not the evidence unit. ASR utterances, OCR detections, frames, and audio windows retain their own timestamps.
+Processing windows organize temporal joining; they are not remote embedding units. ASR utterances, OCR detections, canonical visual intervals, and local audio windows retain their own timestamps. Raw video/audio reaches Gemini only through bounded tools after coarse retrieval.
 
 ### Long-video behavior
 
@@ -144,7 +144,7 @@ $$
 N = \left\lceil\frac{D-W}{S}\right\rceil + 1
 $$
 
-For 90 minutes, `W=16 s`, and `S=8 s`, the implementation emits 674 windows. Frame decoding is a single sequential FFmpeg pass, audio is decoded once, and all writes are deterministic upserts. An ingestion fingerprint permits restart/skip behavior.
+For 90 minutes, `W=16 s`, and `S=8 s`, the implementation retains 674 local temporal windows. It does not embed them. Frame decoding is a single sequential FFmpeg pass, adjacent equivalent frames are collapsed into canonical intervals, and audio is decoded once. Provider responses are dimension-checked and cached before evidence insertion, so a failed run resumes without re-embedding completed content.
 
 There is no “replication worker” in this design. Horizontal ingestion workers may claim different videos, but SQLite/FAISS/pgvector replication is a deployment concern, not a semantic pipeline stage. Each video is fingerprinted by extraction settings and model namespaces: re-running the same command skips completed videos, while a failed video can be retried without `--force`; changing model, dimensions, or chunk settings intentionally selects a new ingestion fingerprint.
 
@@ -189,7 +189,9 @@ Example plan:
   "audio_queries": ["elevated vocal intensity shouting"],
   "required_modalities": ["visual", "audio_event"],
   "relation": "overlap",
-  "target": "onset"
+  "target": "onset",
+  "target_boundary": "onset",
+  "requires_video_verification": true
 }
 ```
 
@@ -218,7 +220,7 @@ The controller is independently implemented from OmniAgent's research environmen
 - at most 30 seconds per audio action;
 - at most 20 seconds per clip action;
 - repeated actions are rejected;
-- default maximum is six turns;
+- default maximum is five turns;
 - a cross-modal supported answer is blocked until required visual/audio media has been directly inspected.
 
 Each action, observation path, compact assessment, retrieved item, and controller warning is atomically persisted to `INDEX/runs/RUN_ID/memory.json`. Raw media does not accumulate in the prompt; compact evidence memory does.
@@ -307,7 +309,7 @@ flowchart TD
 |---|---|---|---|
 | ASR | `ASRBackend` | faster-whisper | WhisperX, cloud ASR, agency transcript |
 | OCR | `OCRBackend` | PaddleOCR | plate-specific OCR, EasyOCR |
-| Semantic embedding | `EmbeddingBackend` / `TextEncoder` | OpenRouter Gemini Embedding 2 (`:batch` for offline indexing) | direct Gemini API, another multimodal embedding provider |
+| Semantic embedding | `EmbeddingBackend` / `TextEncoder` | OpenRouter Gemini Embedding 2 (synchronous ingestion endpoint) | direct Gemini API, another multimodal embedding provider |
 | Local visual fallback | `VisualBackend` / `TextEncoder` | SigLIP2 | video-native encoder, CLIP |
 | Audio | `AudioBackend` | RMS/pitch + optional Silero/YAMNet | PANNs, CLAP, custom prosody classifier |
 | Text index | `IndexStore` | SQLite FTS5 | OpenSearch, Tantivy |

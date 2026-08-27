@@ -25,6 +25,9 @@ def test_postgres_schema_contains_traceability_columns_and_guards():
         "source_sha256",
         "embedding_hash",
         "embedding vector",
+        "embedding_768 vector(768)",
+        "pl_embedding_cache",
+        "dimensions INTEGER NOT NULL CHECK (dimensions = 768)",
     ):
         assert column in POSTGRES_SCHEMA
     assert "REFERENCES pl_evidence(id) ON DELETE CASCADE" in POSTGRES_SCHEMA
@@ -60,6 +63,39 @@ def test_cli_can_select_postgres_backend():
 
     assert args.backend == "postgres"
     assert args.database_url == "postgresql://localhost/patrol_lens"
+
+
+def test_cli_exposes_768_embedding_migration():
+    args = build_parser().parse_args(
+        [
+            "migrate-embeddings",
+            "--backend",
+            "postgres",
+            "--database-url",
+            "postgresql://localhost/patrol_lens",
+        ]
+    )
+
+    assert args.command == "migrate-embeddings"
+    assert args.embedding_dimensions == 768
+
+
+def test_postgres_ingestion_requires_768_dimensions():
+    args = build_parser().parse_args(
+        [
+            "ingest",
+            "videos",
+            "--backend",
+            "postgres",
+            "--embedding-dimensions",
+            "3072",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="requires --embedding-dimensions 768"):
+        from patrol_lens.cli import cmd_ingest
+
+        cmd_ingest(args)
 
 
 def test_postgres_vector_index_delegates_to_store():

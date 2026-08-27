@@ -17,10 +17,12 @@ class IngestionConfig:
     audio_stride_ms: int = 2_000
     batch_size: int = 16
     ocr_min_confidence: float = 0.45
-    schema_version: str = "2.0.0"
-    embedding_dimensions: int = 3072
+    visual_duplicate_distance: int = 8
+    visual_scene_change_distance: int = 18
+    schema_version: str = "3.0.0"
+    embedding_preprocessing_version: str = "scene-keyframe-v1"
+    embedding_dimensions: int = 768
     embedding_batch_size: int = 6
-    embed_video: bool = True
     embed_images: bool = True
 
 
@@ -40,7 +42,7 @@ class RetrievalConfig:
 class AgentConfig:
     model: str = DEFAULT_GEMINI_MODEL
     planner_model: str = DEFAULT_GEMINI_MODEL
-    max_turns: int = 6
+    max_turns: int = 5
     max_frames_per_action: int = 12
     max_audio_ms: int = 30_000
     max_clip_ms: int = 20_000
@@ -53,7 +55,7 @@ class AgentConfig:
         return cls(
             model=resolved,
             planner_model=planner_model or os.getenv("PATROLLENS_GEMINI_PLANNER_MODEL", resolved),
-            max_turns=int(os.getenv("PATROLLENS_AGENT_MAX_TURNS", "6")),
+            max_turns=int(os.getenv("PATROLLENS_AGENT_MAX_TURNS", "5")),
             run_root=os.getenv("PATROLLENS_RUN_ROOT", ".patrol-lens/runs"),
         )
 

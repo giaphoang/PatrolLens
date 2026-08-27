@@ -127,6 +127,8 @@ class QueryPlan:
     relation_tolerance_ms: int = 4_000
     target: str = "event"
     constraints: dict[str, Any] = field(default_factory=dict)
+    target_boundary: str = "event"
+    requires_video_verification: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -92,6 +92,7 @@ def test_ocr_discovery_uses_unknown_text_branch(tmp_path):
 
     assert plan.ocr_queries == ["*"]
     assert set(plan.required_modalities) == {"visual", "ocr"}
+    assert plan.requires_video_verification is True
     assert store.top_evidence("ocr")[0][0].content == "ABC 1234"
     store.close()
 

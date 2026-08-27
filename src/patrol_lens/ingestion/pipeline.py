@@ -9,13 +9,13 @@ from typing import Any, Protocol
 from ..adapters.asr import ASRBackend, WordSpan
 from ..adapters.audio import AudioBackend
 from ..adapters.media import (
+    VisualKeyframe,
+    deduplicate_keyframes,
     extract_audio,
-    extract_audio_segment,
-    extract_clip,
-    extract_frame,
     extract_frame_sequence,
     iter_segments,
     probe_video,
+    sha256_file,
 )
 from ..adapters.audio import AudioAnalysis
 from ..adapters.ocr import OCRBackend
@@ -36,6 +36,7 @@ class VisualBackend(Protocol):
 
 class EmbeddingBackend(Protocol):
     model_name: str
+    dimensions: int
 
     def encode_texts(self, texts: list[str]) -> list[list[float]]: ...
 
@@ -97,6 +98,20 @@ class IngestionPipeline:
         self.store = store
         self.backends = backends or IngestionBackends()
         self.config = config or IngestionConfig()
+        if isinstance(store, PostgresIndexStore) and self.config.embedding_dimensions != 768:
+            raise ValueError("PostgreSQL ingestion requires 768-dimensional embeddings")
+        backend_dimensions = getattr(self.backends.embedding, "dimensions", self.config.embedding_dimensions)
+        if self.backends.embedding and backend_dimensions != self.config.embedding_dimensions:
+            raise ValueError(
+                f"Expected {self.config.embedding_dimensions}, got backend configuration "
+                f"{backend_dimensions}"
+            )
+        self._keyframes: dict[str, list[VisualKeyframe]] = {}
+        self._cache_stats = {
+            "embedding_cache_hits": 0,
+            "embedding_cache_misses": 0,
+            "embedding_api_calls": 0,
+        }
         if vector_index is not None:
             self.vector_index = vector_index
         elif isinstance(store, PostgresIndexStore):
@@ -149,13 +164,17 @@ class IngestionPipeline:
             "visual_vectors": 0,
             "video_embeddings": 0,
             "image_embeddings": 0,
+            "sampled_frames": 0,
+            "visual_keyframes": 0,
+            "deduplicated_frames": 0,
             "embedding_vectors": 0,
             "fingerprint": fingerprint,
             "skipped": False,
         }
+        self._cache_stats = {key: 0 for key in self._cache_stats}
         self.store.mark_ingestion(asset.id, fingerprint, "started", stats)
         try:
-            audio_path = self._audio_path(asset) if (self.backends.asr or self.backends.audio or self.backends.embedding) else None
+            audio_path = self._audio_path(asset) if (self.backends.asr or self.backends.audio) else None
             if self.backends.asr and audio_path:
                 stats["transcript"], transcript_vectors = self._ingest_transcript(asset, segments, audio_path)
                 stats["embedding_vectors"] += transcript_vectors
@@ -164,31 +183,31 @@ class IngestionPipeline:
                 stats.update(visual=visual, ocr=ocr, visual_vectors=vectors)
                 stats["embedding_vectors"] += ocr_vectors
             if self.backends.embedding:
-                if self.config.embed_video:
-                    stats["video_embeddings"] = self._ingest_video_embeddings(asset, segments)
-                    stats["embedding_vectors"] += stats["video_embeddings"]
                 if self.config.embed_images:
-                    stats["image_embeddings"] = self._ingest_image_embeddings(asset, segments)
+                    image_vectors, sampled, duplicates = self._ingest_image_embeddings(asset, segments)
+                    stats["image_embeddings"] = image_vectors
+                    stats["sampled_frames"] = sampled
+                    stats["visual_keyframes"] = image_vectors
+                    stats["deduplicated_frames"] = duplicates
                     stats["embedding_vectors"] += stats["image_embeddings"]
             if self.backends.audio and audio_path:
-                stats["audio"], audio_vectors = self._ingest_audio(asset, segments, audio_path)
-                stats["embedding_vectors"] += audio_vectors
-            elif self.backends.embedding and audio_path:
-                stats["audio"], audio_vectors = self._ingest_audio(asset, segments, audio_path)
-                stats["embedding_vectors"] += audio_vectors
+                stats["audio"] = self._ingest_audio(asset, segments, audio_path)
             rebuild = getattr(self.vector_index, "rebuild", None)
             if callable(rebuild) and self.backends.visual:
                 rebuild(modality="visual", model=self.backends.visual.model_name)
             if callable(rebuild) and self.backends.embedding:
-                for modality in ("visual", "transcript", "ocr", "audio_event"):
+                for modality in ("visual", "transcript", "ocr"):
                     rebuild(modality=modality, model=self.backends.embedding.model_name)
             self.store.set_metadata("index_version", self.config.schema_version)
             self.store.set_metadata("ingestion_fingerprint", fingerprint)
             if self.backends.embedding:
                 self.store.set_metadata("embedding_model", self.backends.embedding.model_name)
+                self.store.set_metadata("embedding_dimensions", self.config.embedding_dimensions)
+            stats.update(self._cache_stats)
             self.store.mark_ingestion(asset.id, fingerprint, "complete", stats)
             return stats
         except Exception as exc:
+            stats.update(self._cache_stats)
             self.store.mark_ingestion(asset.id, fingerprint, "failed", {**stats, "error": str(exc)})
             raise
 
@@ -206,38 +225,162 @@ class IngestionPipeline:
         ordinal = min(len(segments) - 1, max(0, timestamp_ms // self.config.stride_ms))
         return segments[ordinal].id
 
+    def _cache_descriptor(
+        self,
+        content_hash: str,
+        modality: str,
+        input_kind: str,
+    ) -> tuple[str, str]:
+        assert self.backends.embedding is not None
+        preprocessing_version = f"{self.config.embedding_preprocessing_version}:{input_kind}"
+        payload = "\0".join(
+            (
+                content_hash,
+                modality,
+                self.backends.embedding.model_name,
+                str(self.config.embedding_dimensions),
+                preprocessing_version,
+            )
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest(), preprocessing_version
+
+    def _validate_embedding(self, vector: list[float]) -> list[float]:
+        actual = len(vector)
+        if actual != self.config.embedding_dimensions:
+            raise RuntimeError(f"Expected {self.config.embedding_dimensions}, got {actual}")
+        return [float(value) for value in vector]
+
+    def _resolve_cached_embeddings(
+        self,
+        inputs: list[tuple[str, str, str, str | Path]],
+        *,
+        encode: Any,
+    ) -> tuple[list[list[float]], list[dict[str, str]]]:
+        """Resolve vectors by durable key and persist provider responses immediately."""
+
+        assert self.backends.embedding is not None
+        resolved: list[list[float] | None] = [None] * len(inputs)
+        descriptors = []
+        missing: dict[str, list[int]] = {}
+        for content_hash, modality, input_kind, _payload in inputs:
+            cache_key, preprocessing_version = self._cache_descriptor(
+                content_hash, modality, input_kind
+            )
+            descriptors.append(
+                {
+                    "cache_key": cache_key,
+                    "content_hash": content_hash,
+                    "preprocessing_version": preprocessing_version,
+                }
+            )
+        cache_keys = [descriptor["cache_key"] for descriptor in descriptors]
+        get_many = getattr(self.store, "get_cached_embeddings", None)
+        if callable(get_many):
+            checked = get_many(
+                cache_keys,
+                expected_dimensions=self.config.embedding_dimensions,
+            )
+        else:
+            checked = {
+                key: vector
+                for key in dict.fromkeys(cache_keys)
+                if (
+                    vector := self.store.get_cached_embedding(
+                        key,
+                        expected_dimensions=self.config.embedding_dimensions,
+                    )
+                )
+                is not None
+            }
+        for index, descriptor in enumerate(descriptors):
+            cache_key = descriptor["cache_key"]
+            cached = checked.get(cache_key)
+            if cached is not None:
+                resolved[index] = self._validate_embedding(cached)
+                self._cache_stats["embedding_cache_hits"] += 1
+            else:
+                missing.setdefault(cache_key, []).append(index)
+
+        if missing:
+            unique_indexes = [indexes[0] for indexes in missing.values()]
+            vectors = encode([inputs[index][3] for index in unique_indexes])
+            self._cache_stats["embedding_api_calls"] += 1
+            if len(vectors) != len(unique_indexes):
+                raise RuntimeError(
+                    f"embedding backend returned {len(vectors)} vectors for "
+                    f"{len(unique_indexes)} unique inputs"
+                )
+            for index, vector in zip(unique_indexes, vectors):
+                checked_vector = self._validate_embedding(vector)
+                content_hash, modality, _input_kind, _payload = inputs[index]
+                descriptor = descriptors[index]
+                self.store.put_cached_embedding(
+                    descriptor["cache_key"],
+                    content_hash=content_hash,
+                    modality=modality,
+                    model=self.backends.embedding.model_name,
+                    dimensions=self.config.embedding_dimensions,
+                    preprocessing_version=descriptor["preprocessing_version"],
+                    vector=checked_vector,
+                )
+                indexes = missing[descriptor["cache_key"]]
+                for target in indexes:
+                    resolved[target] = checked_vector
+                self._cache_stats["embedding_cache_misses"] += 1
+                self._cache_stats["embedding_cache_hits"] += len(indexes) - 1
+
+        if any(vector is None for vector in resolved):
+            raise RuntimeError("embedding cache resolution left unresolved inputs")
+        return [vector for vector in resolved if vector is not None], descriptors
+
     def _store_text_evidence(self, evidence: list[Evidence]) -> tuple[int, int]:
         """Persist exact text evidence and optional semantic vectors together."""
 
         if not evidence:
             return 0, 0
         if self.backends.embedding:
-            vectors = self.backends.embedding.encode_texts([item.content for item in evidence])
-            if len(vectors) != len(evidence):
-                raise RuntimeError(
-                    f"embedding backend returned {len(vectors)} vectors for {len(evidence)} text records"
+            total = 0
+            for offset in range(0, len(evidence), self.config.embedding_batch_size):
+                batch = evidence[offset : offset + self.config.embedding_batch_size]
+                inputs = [
+                    (
+                        hashlib.sha256(" ".join(item.content.split()).encode("utf-8")).hexdigest(),
+                        item.modality,
+                        "text",
+                        item.content,
+                    )
+                    for item in batch
+                ]
+                vectors, descriptors = self._resolve_cached_embeddings(
+                    inputs,
+                    encode=lambda values: self.backends.embedding.encode_texts(
+                        [str(value) for value in values]
+                    ),
                 )
-            records = [
-                EmbeddingRecord(
-                    id=f"{item.id}-embedding",
-                    evidence_id=item.id,
-                    modality=item.modality,
-                    model=self.backends.embedding.model_name,
-                    vector=vector,
-                    metadata={
-                        "embedding_input": "text",
-                        "api_model": getattr(self.backends.embedding, "batch_model", self.backends.embedding.model_name),
-                    },
-                )
-                for item, vector in zip(evidence, vectors)
-            ]
-            add_pair = getattr(self.store, "add_evidence_and_embeddings", None)
-            if callable(add_pair):
-                add_pair(evidence, records)
-            else:
-                self.store.add_evidence_many(evidence)
-                self.store.add_embeddings(records)
-            return len(evidence), len(records)
+                records = [
+                    EmbeddingRecord(
+                        id=f"{item.id}-embedding",
+                        evidence_id=item.id,
+                        modality=item.modality,
+                        model=self.backends.embedding.model_name,
+                        vector=vector,
+                        metadata={
+                            "embedding_input": "text",
+                            "api_model": self.backends.embedding.model_name,
+                            "embedding_dimensions": self.config.embedding_dimensions,
+                            **descriptor,
+                        },
+                    )
+                    for item, vector, descriptor in zip(batch, vectors, descriptors)
+                ]
+                add_pair = getattr(self.store, "add_evidence_and_embeddings", None)
+                if callable(add_pair):
+                    add_pair(batch, records)
+                else:
+                    self.store.add_evidence_many(batch)
+                    self.store.add_embeddings(records)
+                total += len(records)
+            return len(evidence), total
         self.store.add_evidence_many(evidence)
         return len(evidence), 0
 
@@ -270,7 +413,14 @@ class IngestionPipeline:
                     content=content,
                     confidence=sum(confidences) / len(confidences) if confidences else 0.75,
                     source=self.backends.asr.model_name,
-                    metadata={"word_count": len(chunk)},
+                    metadata={
+                        "word_count": len(chunk),
+                        "source_reference": str(audio_path),
+                        "source_hash": hashlib.sha256(
+                            " ".join(content.split()).encode("utf-8")
+                        ).hexdigest(),
+                        "processing_version": self.config.schema_version,
+                    },
                 )
             )
         return self._store_text_evidence(evidence)
@@ -318,6 +468,73 @@ class IngestionPipeline:
             )
         return frames
 
+    def _ensure_keyframes(self, asset: VideoAsset) -> list[VisualKeyframe]:
+        cached = self._keyframes.get(asset.id)
+        if cached is not None:
+            return cached
+        frames = self._ensure_frame_sequence(asset)
+        manifest_dir = self.store.root / "media" / "keyframes" / asset.id
+        manifest_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = manifest_dir / "manifest.json"
+        manifest: dict[str, Any] = {}
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text())
+            except json.JSONDecodeError:
+                manifest = {}
+        config_matches = (
+            manifest.get("video_sha256") == asset.sha256
+            and manifest.get("frame_step_ms") == self.config.frame_step_ms
+            and manifest.get("duplicate_distance") == self.config.visual_duplicate_distance
+            and manifest.get("scene_change_distance") == self.config.visual_scene_change_distance
+        )
+        records = manifest.get("keyframes", []) if config_matches else []
+        keyframes = [
+            VisualKeyframe(
+                timestamp_ms=int(item["timestamp_ms"]),
+                start_ms=int(item["start_ms"]),
+                end_ms=int(item["end_ms"]),
+                path=Path(item["path"]),
+                perceptual_hash=str(item["perceptual_hash"]),
+                frame_count=int(item["frame_count"]),
+            )
+            for item in records
+            if Path(item.get("path", "")).is_file()
+        ]
+        if len(keyframes) != len(records) or not records:
+            keyframes = deduplicate_keyframes(
+                frames,
+                frame_step_ms=self.config.frame_step_ms,
+                duration_ms=asset.duration_ms,
+                duplicate_distance=self.config.visual_duplicate_distance,
+                scene_change_distance=self.config.visual_scene_change_distance,
+            )
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "video_sha256": asset.sha256,
+                        "frame_step_ms": self.config.frame_step_ms,
+                        "duplicate_distance": self.config.visual_duplicate_distance,
+                        "scene_change_distance": self.config.visual_scene_change_distance,
+                        "sampled_frame_count": len(frames),
+                        "keyframes": [
+                            {
+                                "timestamp_ms": item.timestamp_ms,
+                                "start_ms": item.start_ms,
+                                "end_ms": item.end_ms,
+                                "path": str(item.path),
+                                "perceptual_hash": item.perceptual_hash,
+                                "frame_count": item.frame_count,
+                            }
+                            for item in keyframes
+                        ],
+                    },
+                    indent=2,
+                )
+            )
+        self._keyframes[asset.id] = keyframes
+        return keyframes
+
     def _ingest_frames(
         self,
         asset: VideoAsset,
@@ -327,24 +544,36 @@ class IngestionPipeline:
         visual_count = ocr_count = vector_count = 0
         ocr_vectors = 0
         if self.backends.visual:
-            for offset in range(0, len(frames), self.config.batch_size):
-                batch = frames[offset : offset + self.config.batch_size]
-                vectors = self._encode_batch([item[1] for item in batch])
+            keyframes = self._ensure_keyframes(asset)
+            for offset in range(0, len(keyframes), self.config.batch_size):
+                batch = keyframes[offset : offset + self.config.batch_size]
+                vectors = self._encode_batch([item.path for item in batch])
                 evidence: list[Evidence] = []
                 embeddings: list[EmbeddingRecord] = []
-                for (timestamp_ms, frame_path), vector in zip(batch, vectors):
-                    evidence_id = f"{asset.id}-visual-{timestamp_ms:010d}"
+                for keyframe, vector in zip(batch, vectors):
+                    evidence_id = f"{asset.id}-visual-{keyframe.timestamp_ms:010d}"
+                    source_hash = sha256_file(keyframe.path)
                     item = Evidence(
                         id=evidence_id,
                         video_id=asset.id,
-                        segment_id=self._segment_for(segments, timestamp_ms),
-                        start_ms=timestamp_ms,
-                        end_ms=min(asset.duration_ms, timestamp_ms + self.config.frame_step_ms),
+                        segment_id=self._segment_for(segments, keyframe.start_ms),
+                        start_ms=keyframe.start_ms,
+                        end_ms=keyframe.end_ms,
                         modality="visual",
-                        content=f"sampled body-camera frame at {timestamp_ms / 1000:.3f}s",
+                        content=(
+                            f"canonical body-camera keyframe covering "
+                            f"{keyframe.start_ms / 1000:.3f}s to {keyframe.end_ms / 1000:.3f}s"
+                        ),
                         confidence=1.0,
                         source=self.backends.visual.model_name,
-                        metadata={"frame_path": str(frame_path)},
+                        metadata={
+                            "frame_path": str(keyframe.path),
+                            "source_reference": str(keyframe.path),
+                            "source_hash": source_hash,
+                            "perceptual_hash": keyframe.perceptual_hash,
+                            "sample_count": keyframe.frame_count,
+                            "processing_version": self.config.schema_version,
+                        },
                     )
                     evidence.append(item)
                     embeddings.append(
@@ -354,7 +583,10 @@ class IngestionPipeline:
                             modality="visual",
                             model=self.backends.visual.model_name,
                             vector=vector,
-                            metadata={"frame_path": str(frame_path)},
+                            metadata={
+                                "frame_path": str(keyframe.path),
+                                "perceptual_hash": keyframe.perceptual_hash,
+                            },
                         )
                     )
                 add_pair = getattr(self.store, "add_evidence_and_embeddings", None)
@@ -369,7 +601,9 @@ class IngestionPipeline:
         if self.backends.ocr:
             evidence = []
             for timestamp_ms, frame_path in frames:
-                for ordinal, result in enumerate(self.backends.ocr.detect(str(frame_path))):
+                results = list(self.backends.ocr.detect(str(frame_path)))
+                frame_hash = sha256_file(frame_path) if results else None
+                for ordinal, result in enumerate(results):
                     text = str(result.get("text", "")).strip()
                     confidence = float(result.get("confidence") or 0.0)
                     if not text or confidence < self.config.ocr_min_confidence:
@@ -385,7 +619,13 @@ class IngestionPipeline:
                             content=text,
                             confidence=confidence,
                             source=self.backends.ocr.model_name,
-                            metadata={"frame_path": str(frame_path), "box": _json_safe(result.get("box"))},
+                            metadata={
+                                "frame_path": str(frame_path),
+                                "source_reference": str(frame_path),
+                                "source_hash": frame_hash,
+                                "processing_version": self.config.schema_version,
+                                "box": _json_safe(result.get("box")),
+                            },
                         )
                     )
                     if len(evidence) >= 500:
@@ -412,13 +652,25 @@ class IngestionPipeline:
         if not self.backends.embedding:
             self.store.add_evidence_many(evidence)
             return len(evidence), 0
+        if media_kind != "image":
+            raise ValueError("remote ingestion embeddings are limited to deduplicated images")
         if len(evidence) != len(paths):
             raise ValueError("media evidence and paths must have the same length")
-        vectors = self.backends.embedding.encode_media_many(paths)
-        if len(vectors) != len(evidence):
-            raise RuntimeError(
-                f"embedding backend returned {len(vectors)} vectors for {len(evidence)} media records"
+        inputs = [
+            (
+                str(item.metadata.get("source_hash") or sha256_file(path)),
+                item.modality,
+                media_kind,
+                path,
             )
+            for item, path in zip(evidence, paths)
+        ]
+        vectors, descriptors = self._resolve_cached_embeddings(
+            inputs,
+            encode=lambda values: self.backends.embedding.encode_media_many(
+                [Path(value) for value in values]
+            ),
+        )
         records = [
             EmbeddingRecord(
                 id=f"{item.id}-embedding",
@@ -428,11 +680,13 @@ class IngestionPipeline:
                 vector=vector,
                 metadata={
                     "embedding_input": media_kind,
-                    "api_model": getattr(self.backends.embedding, "batch_model", self.backends.embedding.model_name),
+                    "api_model": self.backends.embedding.model_name,
+                    "embedding_dimensions": self.config.embedding_dimensions,
                     "media_path": str(path),
+                    **descriptor,
                 },
             )
-            for item, path, vector in zip(evidence, paths, vectors)
+            for item, path, vector, descriptor in zip(evidence, paths, vectors, descriptors)
         ]
         add_pair = getattr(self.store, "add_evidence_and_embeddings", None)
         if callable(add_pair):
@@ -442,97 +696,59 @@ class IngestionPipeline:
             self.store.add_embeddings(records)
         return len(evidence), len(records)
 
-    def _ingest_video_embeddings(self, asset: VideoAsset, segments: list[Segment]) -> int:
-        """Embed bounded temporal video chunks in the shared visual space."""
+    def _ingest_image_embeddings(
+        self,
+        asset: VideoAsset,
+        segments: list[Segment],
+    ) -> tuple[int, int, int]:
+        """Embed only canonical images from local scene/change deduplication."""
 
         assert self.backends.embedding is not None
-        if self.config.window_ms > 120_000:
-            raise ValueError("Gemini Embedding 2 video chunks cannot exceed 120 seconds")
-        clip_dir = self.store.root / "media" / "video_chunks" / asset.id
-        total = 0
-        for offset in range(0, len(segments), self.config.embedding_batch_size):
-            batch = segments[offset : offset + self.config.embedding_batch_size]
-            evidence: list[Evidence] = []
-            paths: list[Path] = []
-            for segment in batch:
-                clip_path = clip_dir / f"{segment.id}.mp4"
-                if not clip_path.exists():
-                    extract_clip(asset.path, segment.start_ms, segment.end_ms, clip_path, max_width=960)
-                evidence.append(
-                    Evidence(
-                        id=f"{segment.id}-visual-video",
-                        video_id=asset.id,
-                        segment_id=segment.id,
-                        start_ms=segment.start_ms,
-                        end_ms=segment.end_ms,
-                        modality="visual",
-                        content=(
-                            f"body-camera video chunk from {segment.start_ms / 1000:.3f}s "
-                            f"to {segment.end_ms / 1000:.3f}s"
-                        ),
-                        confidence=1.0,
-                        source=self.backends.embedding.model_name,
-                        metadata={"media_path": str(clip_path), "media_kind": "video"},
-                    )
-                )
-                paths.append(clip_path)
-            _count, vectors = self._store_media_evidence(evidence, paths, media_kind="video")
-            total += vectors
-        return total
-
-    def _ingest_image_embeddings(self, asset: VideoAsset, segments: list[Segment]) -> int:
-        """Embed one representative image per temporal chunk for image search."""
-
-        assert self.backends.embedding is not None
-        frame_records: list[tuple[int, Path]]
-        if self.backends.ocr or self.backends.visual:
-            frame_records = self._ensure_frame_sequence(asset)
-        else:
-            frame_records = []
-        keyframe_dir = self.store.root / "media" / "keyframes" / asset.id
-        selected: list[tuple[Segment, Path]] = []
-        for ordinal, segment in enumerate(segments):
-            midpoint = (segment.start_ms + segment.end_ms) // 2
-            if frame_records:
-                _timestamp, frame_path = min(frame_records, key=lambda item: abs(item[0] - midpoint))
-            else:
-                frame_path = keyframe_dir / f"frame-{ordinal:06d}-{midpoint}.jpg"
-                if not frame_path.exists():
-                    extract_frame(asset.path, midpoint, frame_path)
-            selected.append((segment, frame_path))
+        keyframes = self._ensure_keyframes(asset)
 
         total = 0
-        for offset in range(0, len(selected), self.config.embedding_batch_size):
-            batch = selected[offset : offset + self.config.embedding_batch_size]
+        for offset in range(0, len(keyframes), self.config.embedding_batch_size):
+            batch = keyframes[offset : offset + self.config.embedding_batch_size]
+            source_hashes = {item.path: sha256_file(item.path) for item in batch}
             evidence = [
                 Evidence(
-                    id=f"{segment.id}-visual-image",
+                    id=f"{asset.id}-visual-image-{keyframe.timestamp_ms:010d}",
                     video_id=asset.id,
-                    segment_id=segment.id,
-                    start_ms=segment.start_ms,
-                    end_ms=segment.end_ms,
+                    segment_id=self._segment_for(segments, keyframe.start_ms),
+                    start_ms=keyframe.start_ms,
+                    end_ms=keyframe.end_ms,
                     modality="visual",
                     content=(
-                        f"representative body-camera image for {segment.start_ms / 1000:.3f}s "
-                        f"to {segment.end_ms / 1000:.3f}s"
+                        f"canonical body-camera keyframe covering "
+                        f"{keyframe.start_ms / 1000:.3f}s to {keyframe.end_ms / 1000:.3f}s"
                     ),
                     confidence=1.0,
                     source=self.backends.embedding.model_name,
-                    metadata={"media_path": str(frame_path), "media_kind": "image"},
+                    metadata={
+                        "media_path": str(keyframe.path),
+                        "source_reference": str(keyframe.path),
+                        "source_hash": source_hashes[keyframe.path],
+                        "media_kind": "image",
+                        "perceptual_hash": keyframe.perceptual_hash,
+                        "sample_count": keyframe.frame_count,
+                        "canonical_timestamp_ms": keyframe.timestamp_ms,
+                        "processing_version": self.config.schema_version,
+                    },
                 )
-                for segment, frame_path in batch
+                for keyframe in batch
             ]
-            paths = [frame_path for _segment, frame_path in batch]
+            paths = [keyframe.path for keyframe in batch]
             _count, vectors = self._store_media_evidence(evidence, paths, media_kind="image")
             total += vectors
-        return total
+        sampled = sum(item.frame_count for item in keyframes)
+        return total, sampled, max(0, sampled - len(keyframes))
 
     def _ingest_audio(
         self,
         asset: VideoAsset,
         segments: list[Segment],
         audio_path: Path,
-    ) -> tuple[int, int]:
+    ) -> int:
         intervals: list[tuple[int, int]] = []
         start_ms = 0
         while start_ms < asset.duration_ms:
@@ -553,34 +769,24 @@ class IngestionPipeline:
         else:
             analyses = [AudioAnalysis(-80.0, 0.0, None) for _interval in intervals]
 
-        audio_dir = self.store.root / "media" / "audio_chunks" / asset.id
-        vector_count = 0
-        batch_size = self.config.embedding_batch_size if self.backends.embedding else 500
+        batch_size = 500
         for offset in range(0, len(intervals), batch_size):
             batch_intervals = intervals[offset : offset + batch_size]
             batch_analyses = analyses[offset : offset + batch_size]
             evidence: list[Evidence] = []
-            paths: list[Path] = []
             for ordinal, ((start_ms, end_ms), result) in enumerate(
                 zip(batch_intervals, batch_analyses), start=offset
             ):
-                media_path: Path | None = None
-                if self.backends.embedding:
-                    if end_ms - start_ms > 180_000:
-                        raise ValueError("Gemini Embedding 2 audio chunks cannot exceed 180 seconds")
-                    media_path = audio_dir / f"{asset.id}-audio-{ordinal:07d}.wav"
-                    if not media_path.exists():
-                        extract_audio_segment(audio_path, start_ms, end_ms, media_path)
-                    paths.append(media_path)
                 source = self.backends.audio.model_name if self.backends.audio else "audio-window"
                 metadata: dict[str, Any] = {
                     "rms_db": result.rms_db,
                     "speech_activity": result.speech_activity,
                     "pitch_hz": result.pitch_hz,
                     "event_scores": result.event_scores,
+                    "source_reference": str(audio_path),
+                    "source_hash": asset.sha256,
+                    "processing_version": self.config.schema_version,
                 }
-                if media_path:
-                    metadata.update({"media_path": str(media_path), "media_kind": "audio"})
                 evidence.append(
                     Evidence(
                         id=f"{asset.id}-audio-{ordinal:07d}",
@@ -595,9 +801,5 @@ class IngestionPipeline:
                         metadata=metadata,
                     )
                 )
-            if self.backends.embedding:
-                _count, vectors = self._store_media_evidence(evidence, paths, media_kind="audio")
-                vector_count += vectors
-            else:
-                self.store.add_evidence_many(evidence)
-        return len(intervals), vector_count
+            self.store.add_evidence_many(evidence)
+        return len(intervals)

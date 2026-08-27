@@ -5,7 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from patrol_lens.adapters.openrouter import OpenRouterEmbeddingClient, OpenRouterJSONClient
+from patrol_lens.adapters.openrouter import (
+    EmbeddingDimensionError,
+    OpenRouterEmbeddingClient,
+    OpenRouterJSONClient,
+)
 
 
 class FakeCompletions:
@@ -142,6 +146,8 @@ def test_openrouter_embedding_client_batches_text_and_media(tmp_path):
     assert len(media_vectors) == 3
     assert embeddings.calls[0]["model"] == "google/gemini-embedding-2"
     assert embeddings.calls[0]["input"] == "task: search result | query: red jacket"
+    assert embeddings.calls[0]["dimensions"] == 3
+    assert embeddings.calls[0]["extra_body"] == {"output_dimensionality": 3}
     assert embeddings.calls[1]["model"] == "google/gemini-embedding-2:batch"
     assert embeddings.calls[1]["input"] == [
         "title: none | text: Miranda rights",
@@ -150,3 +156,12 @@ def test_openrouter_embedding_client_batches_text_and_media(tmp_path):
     assert embeddings.calls[2]["input"][0]["content"][0]["type"] == "image_url"
     assert embeddings.calls[3]["input"][0]["content"][0]["type"] == "video_url"
     assert embeddings.calls[4]["input"][0]["content"][0]["type"] == "input_audio"
+
+
+def test_openrouter_rejects_provider_dimension_mismatch():
+    embeddings = FakeEmbeddings(dimensions=4)
+    client = OpenRouterEmbeddingClient(dimensions=3, api_key="test-key")
+    client._client = FakeEmbeddingClient(embeddings)
+
+    with pytest.raises(EmbeddingDimensionError, match=r"Expected 3, got 4"):
+        client.encode_text("dimension mismatch")
