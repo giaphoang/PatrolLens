@@ -1,0 +1,4 @@
+kramdown:
+  math_engine: mathjax
+markdown: kramdown
+title: PatrolLens docs
