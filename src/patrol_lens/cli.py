@@ -18,10 +18,17 @@ from .adapters.audio import (
 )
 from .adapters.media import iter_video_files
 from .adapters.ocr import PaddleOCRBackend
-from .adapters.openrouter import OpenRouterJSONClient
+from .adapters.openrouter import OpenRouterEmbeddingClient, OpenRouterJSONClient
 from .adapters.visual import SigLIP2Encoder
 from .agent import ActivePerceptionAgent, GeminiActivePolicy
-from .config import DEFAULT_GEMINI_MODEL, AgentConfig, IngestionConfig, RetrievalConfig
+from .config import (
+    DEFAULT_GEMINI_EMBEDDING_BATCH_MODEL,
+    DEFAULT_GEMINI_EMBEDDING_MODEL,
+    DEFAULT_GEMINI_MODEL,
+    AgentConfig,
+    IngestionConfig,
+    RetrievalConfig,
+)
 from .evaluate import evaluate_file
 from .index import AutoVectorIndex, IndexStore, PostgresIndexStore, PostgresVectorIndex
 from .ingestion import IngestionBackends, IngestionPipeline
@@ -60,10 +67,28 @@ def _gemini(model: str, args: argparse.Namespace) -> OpenRouterJSONClient:
     )
 
 
+def _embedding(args: argparse.Namespace) -> OpenRouterEmbeddingClient:
+    return OpenRouterEmbeddingClient(
+        model=args.embedding_model,
+        batch_model=args.embedding_batch_model,
+        query_model=args.embedding_query_model,
+        dimensions=args.embedding_dimensions,
+        base_url=args.openrouter_base_url,
+        http_referer=args.openrouter_http_referer,
+        title=args.openrouter_title,
+        media_batch_size=getattr(args, "embedding_batch_size", 6),
+    )
+
+
 def _ingestion_backends(args: argparse.Namespace) -> IngestionBackends:
     if args.profile == "metadata":
         return IngestionBackends()
-    visual = None if args.no_visual else SigLIP2Encoder(args.visual_model, device=args.device)
+    embedding = None if args.no_embeddings else _embedding(args)
+    visual = (
+        None
+        if args.no_visual or embedding is not None
+        else SigLIP2Encoder(args.visual_model, device=args.device)
+    )
     asr = None if args.no_asr else FasterWhisperASR(
         args.asr_model,
         device=args.device,
@@ -80,7 +105,7 @@ def _ingestion_backends(args: argparse.Namespace) -> IngestionBackends:
         if use_yamnet:
             analyzers.append(YAMNetAnalyzer())
         audio = CompositeAudioAnalyzer(analyzers)
-    return IngestionBackends(visual=visual, asr=asr, ocr=ocr, audio=audio)
+    return IngestionBackends(visual=visual, embedding=embedding, asr=asr, ocr=ocr, audio=audio)
 
 
 def cmd_ingest(args: argparse.Namespace) -> None:
@@ -88,6 +113,10 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         raise ValueError("frame rate, windows, and strides must be positive")
     if args.batch_size <= 0:
         raise ValueError("--batch-size must be positive")
+    if args.embedding_batch_size <= 0:
+        raise ValueError("--embedding-batch-size must be positive")
+    if args.embedding_dimensions <= 0 or args.embedding_dimensions > 3072:
+        raise ValueError("--embedding-dimensions must be between 1 and 3072")
     with _open_store(args) as store:
         config = IngestionConfig(
             window_ms=round(args.window_s * 1000),
@@ -96,6 +125,10 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             audio_window_ms=round(args.audio_window_s * 1000),
             audio_stride_ms=round(args.audio_stride_s * 1000),
             batch_size=args.batch_size,
+            embedding_dimensions=args.embedding_dimensions,
+            embedding_batch_size=args.embedding_batch_size,
+            embed_video=not args.no_visual and not args.no_embedding_video,
+            embed_images=not args.no_visual and not args.no_embedding_images,
         )
         pipeline = IngestionPipeline(
             store,
@@ -121,7 +154,12 @@ def _build_retriever(
         planner = GeminiQueryPlanner(client, model=args.planner_model)
     else:
         planner = HeuristicQueryPlanner()
-    visual = None if args.no_visual else SigLIP2Encoder(args.visual_model, device=args.device)
+    embedding = None if args.no_embeddings else _embedding(args)
+    visual = (
+        None
+        if args.no_visual
+        else embedding or SigLIP2Encoder(args.visual_model, device=args.device)
+    )
     config = RetrievalConfig(
         branch_k=args.branch_k,
         top_k=args.top_k,
@@ -133,6 +171,7 @@ def _build_retriever(
         store,
         planner=planner,
         visual_encoder=visual,
+        semantic_encoder=embedding,
         vector_index=_vector_index(store),
         config=config,
     )
@@ -226,6 +265,31 @@ def _add_ingest_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("input", help="Video file or directory")
     _add_storage_arguments(parser)
     parser.add_argument("--profile", choices=["full", "core", "metadata"], default="core")
+    _add_openrouter_transport_arguments(parser)
+    parser.add_argument(
+        "--embedding-model",
+        default=os.getenv("PATROLLENS_EMBEDDING_MODEL", DEFAULT_GEMINI_EMBEDDING_MODEL),
+        help="Canonical Gemini Embedding 2 model namespace",
+    )
+    parser.add_argument(
+        "--embedding-batch-model",
+        default=os.getenv("PATROLLENS_EMBEDDING_BATCH_MODEL", DEFAULT_GEMINI_EMBEDDING_BATCH_MODEL),
+        help="OpenRouter model variant used for offline document/media batches",
+    )
+    parser.add_argument(
+        "--embedding-query-model",
+        default=os.getenv("PATROLLENS_EMBEDDING_QUERY_MODEL", DEFAULT_GEMINI_EMBEDDING_MODEL),
+        help="Model used to embed investigator queries",
+    )
+    parser.add_argument(
+        "--embedding-dimensions",
+        type=int,
+        default=int(os.getenv("PATROLLENS_EMBEDDING_DIMENSIONS", "3072")),
+    )
+    parser.add_argument("--embedding-batch-size", type=int, default=6)
+    parser.add_argument("--no-embeddings", action="store_true")
+    parser.add_argument("--no-embedding-video", action="store_true")
+    parser.add_argument("--no-embedding-images", action="store_true")
     parser.add_argument("--visual-model", default="google/siglip2-base-patch16-224")
     parser.add_argument("--asr-model", default="large-v3-turbo")
     parser.add_argument("--ocr-language", default="en")
@@ -252,6 +316,36 @@ def _add_retrieval_arguments(parser: argparse.ArgumentParser) -> None:
     _add_storage_arguments(parser)
     parser.add_argument("--planner", choices=["gemini", "heuristic"], default="gemini")
     parser.add_argument("--planner-model", default=os.getenv("PATROLLENS_GEMINI_PLANNER_MODEL", DEFAULT_GEMINI_MODEL))
+    _add_openrouter_transport_arguments(parser)
+    parser.add_argument("--visual-model", default="google/siglip2-base-patch16-224")
+    parser.add_argument("--no-visual", action="store_true")
+    parser.add_argument(
+        "--embedding-model",
+        default=os.getenv("PATROLLENS_EMBEDDING_MODEL", DEFAULT_GEMINI_EMBEDDING_MODEL),
+    )
+    parser.add_argument(
+        "--embedding-batch-model",
+        default=os.getenv("PATROLLENS_EMBEDDING_BATCH_MODEL", DEFAULT_GEMINI_EMBEDDING_BATCH_MODEL),
+    )
+    parser.add_argument(
+        "--embedding-query-model",
+        default=os.getenv("PATROLLENS_EMBEDDING_QUERY_MODEL", DEFAULT_GEMINI_EMBEDDING_MODEL),
+    )
+    parser.add_argument(
+        "--embedding-dimensions",
+        type=int,
+        default=int(os.getenv("PATROLLENS_EMBEDDING_DIMENSIONS", "3072")),
+    )
+    parser.add_argument("--no-embeddings", action="store_true")
+    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--top-k", type=int, default=12)
+    parser.add_argument("--branch-k", type=int, default=60)
+    parser.add_argument("--temporal-tolerance-s", type=float, default=4.0)
+    parser.add_argument("--merge-gap-s", type=float, default=3.0)
+    parser.add_argument("--candidate-padding-s", type=float, default=5.0)
+
+
+def _add_openrouter_transport_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--openrouter-base-url",
         default=os.getenv("PATROLLENS_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
@@ -267,14 +361,6 @@ def _add_retrieval_arguments(parser: argparse.ArgumentParser) -> None:
         default=os.getenv("PATROLLENS_OPENROUTER_TITLE"),
         help="Optional X-OpenRouter-Title attribution header",
     )
-    parser.add_argument("--visual-model", default="google/siglip2-base-patch16-224")
-    parser.add_argument("--no-visual", action="store_true")
-    parser.add_argument("--device", default="cpu")
-    parser.add_argument("--top-k", type=int, default=12)
-    parser.add_argument("--branch-k", type=int, default=60)
-    parser.add_argument("--temporal-tolerance-s", type=float, default=4.0)
-    parser.add_argument("--merge-gap-s", type=float, default=3.0)
-    parser.add_argument("--candidate-padding-s", type=float, default=5.0)
 
 
 def _add_storage_arguments(parser: argparse.ArgumentParser) -> None:

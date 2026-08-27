@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from patrol_lens.adapters.openrouter import OpenRouterJSONClient
+from patrol_lens.adapters.openrouter import OpenRouterEmbeddingClient, OpenRouterJSONClient
 
 
 class FakeCompletions:
@@ -26,6 +26,27 @@ class FakeCompletions:
 class FakeClient:
     def __init__(self, completions: FakeCompletions) -> None:
         self.chat = SimpleNamespace(completions=completions)
+
+
+class FakeEmbeddings:
+    def __init__(self, dimensions: int = 3) -> None:
+        self.dimensions = dimensions
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        inputs = kwargs["input"] if isinstance(kwargs["input"], list) else [kwargs["input"]]
+        return SimpleNamespace(
+            data=[
+                SimpleNamespace(embedding=[float(index + 1)] * self.dimensions, index=index)
+                for index, _input in enumerate(inputs)
+            ]
+        )
+
+
+class FakeEmbeddingClient:
+    def __init__(self, embeddings: FakeEmbeddings) -> None:
+        self.embeddings = embeddings
 
 
 def test_openrouter_builds_openai_compatible_multimodal_payload(tmp_path):
@@ -91,3 +112,41 @@ def test_openrouter_requires_openrouter_key(monkeypatch):
 
     with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
         OpenRouterJSONClient()
+
+
+def test_openrouter_embedding_client_batches_text_and_media(tmp_path):
+    image = tmp_path / "frame.jpg"
+    video = tmp_path / "chunk.mp4"
+    audio = tmp_path / "chunk.wav"
+    image.write_bytes(b"image")
+    video.write_bytes(b"video")
+    audio.write_bytes(b"audio")
+
+    embeddings = FakeEmbeddings()
+    client = OpenRouterEmbeddingClient(
+        model="google/gemini-embedding-2",
+        batch_model="google/gemini-embedding-2:batch",
+        query_model="google/gemini-embedding-2",
+        dimensions=3,
+        api_key="test-key",
+        media_batch_size=2,
+    )
+    client._client = FakeEmbeddingClient(embeddings)
+
+    query_vector = client.encode_text("red jacket")
+    document_vectors = client.encode_texts(["Miranda rights", "ABC 123"])
+    media_vectors = client.encode_media_many([image, video, audio])
+
+    assert len(query_vector) == 3
+    assert len(document_vectors) == 2
+    assert len(media_vectors) == 3
+    assert embeddings.calls[0]["model"] == "google/gemini-embedding-2"
+    assert embeddings.calls[0]["input"] == "task: search result | query: red jacket"
+    assert embeddings.calls[1]["model"] == "google/gemini-embedding-2:batch"
+    assert embeddings.calls[1]["input"] == [
+        "title: none | text: Miranda rights",
+        "title: none | text: ABC 123",
+    ]
+    assert embeddings.calls[2]["input"][0]["content"][0]["type"] == "image_url"
+    assert embeddings.calls[3]["input"][0]["content"][0]["type"] == "video_url"
+    assert embeddings.calls[4]["input"][0]["content"][0]["type"] == "input_audio"

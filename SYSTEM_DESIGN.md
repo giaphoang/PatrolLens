@@ -27,7 +27,8 @@ flowchart LR
     V["38 bodycam videos<br/>≤ 90 min each"]
 
     subgraph OFF["1. Offline multimodal ingestion"]
-        E["Cheap local models"]
+        E["Whisper / PaddleOCR / local audio cues"]
+        GE["OpenRouter Gemini Embedding 2 :batch\ntext · image · audio · video"]
         IDX["Timestamped evidence index"]
     end
 
@@ -49,6 +50,7 @@ flowchart LR
     OUT["video + [start,end]<br/>confidence + evidence"]
 
     V --> E --> IDX
+    V --> GE --> IDX
     Q["Investigator query"] --> QP --> SEARCH
     IDX --> SEARCH --> FUSE --> GEM
     GEM --> TOOLS --> MEM --> GEM
@@ -66,7 +68,9 @@ SQLite/FAISS remains useful for a dependency-light local smoke test. The product
 flowchart LR
     R["Raw source video"] --> X["FFmpeg / local model extraction"]
     X --> E["Canonical pl_evidence\ncontent + timestamp + metadata + hash"]
+    E --> G["Gemini Embedding 2 :batch\ntext · image · audio · video"]
     E --> T["ACID evidence/embedding transaction"]
+    G --> T
     T --> V["pl_embeddings\nvector + copied provenance + evidence FK"]
     Q["Query vector"] --> S["pgvector cosine ORDER BY"]
     S --> V
@@ -89,35 +93,45 @@ flowchart LR
     PROBE --> AUDIO["Decode 16 kHz mono once"]
     PROBE --> FRAMES["Decode frame sequence once<br/>~1 FPS"]
 
+    SEG --> VIDEO_EMB["Gemini Embedding 2<br/>video chunks"]
+    SEG --> KEYFRAMES["Representative keyframes"]
     AUDIO --> ASR["faster-whisper<br/>large-v3-turbo"]
+    AUDIO --> AUDIO_EMB["Gemini Embedding 2<br/>audio chunks"]
     AUDIO --> VAD["Silero VAD"]
     AUDIO --> PROSODY["RMS + pitch"]
     AUDIO --> EVENTS["YAMNet"]
-    FRAMES --> VIS["SigLIP2 embeddings"]
+    FRAMES --> IMAGE_EMB["Gemini Embedding 2<br/>image embeddings"]
     FRAMES --> OCR["PaddleOCR"]
 
     ASR --> FTS["SQLite FTS5"]
+    ASR --> TEXT_EMB["Gemini Embedding 2<br/>transcript embeddings"]
     OCR --> FTS
+    OCR --> OCR_EMB["Gemini Embedding 2<br/>OCR embeddings"]
     VAD --> SQL["SQLite evidence"]
     PROSODY --> SQL
     EVENTS --> SQL
-    VIS --> FAISS["FAISS IP index"]
+    KEYFRAMES --> IMAGE_EMB
+    VIDEO_EMB --> VEC["pgvector / FAISS<br/>unified vector space"]
+    IMAGE_EMB --> VEC
+    AUDIO_EMB --> VEC
+    TEXT_EMB --> VEC
+    OCR_EMB --> VEC
     FTS --> META["Canonical timestamps + provenance"]
     SQL --> META
-    FAISS --> META
+    VEC --> META
 ```
 
 ### Why these components exist
 
 | Requirement | Component | Resolution |
 |---|---|---|
-| Visual appearance | SigLIP2 | Open-vocabulary text-to-frame retrieval for clothing, vehicles, nighttime, and objects |
+| Visual appearance and cross-modal media | Gemini Embedding 2 | Unified semantic search over video chunks, images, audio, transcript, and OCR |
 | Spoken language | faster-whisper | Word/utterance timestamps for Miranda rights, commands, names, and quotations |
 | Visible writing | PaddleOCR | Literal plate/sign/badge text with frame timestamps and confidence |
 | Voice/prosody | Silero + RMS/pitch | Speech presence and raised-intensity cues without pretending loudness proves speaker identity |
 | Non-speech sound | YAMNet | Candidate cues for sirens, gunshots, barking, alarms, and related AudioSet events |
-| Text lookup | SQLite FTS5/BM25 | Fast local ASR/OCR/audio-label retrieval |
-| Visual lookup | FAISS | Fast cosine/IP search over normalized SigLIP2 vectors |
+| Exact text lookup | SQLite FTS5/BM25 | Fast local ASR/OCR/audio-label retrieval, preserving literal strings |
+| Semantic lookup | pgvector / FAISS | Cosine/IP search over Gemini Embedding 2 vectors from every indexed modality |
 | Provenance | SQLite | Model, confidence, media path, exact time span, and processing fingerprint |
 
 Processing windows organize work; they are not the evidence unit. ASR utterances, OCR detections, frames, and audio windows retain their own timestamps.
@@ -132,7 +146,7 @@ $$
 
 For 90 minutes, `W=16 s`, and `S=8 s`, the implementation emits 674 windows. Frame decoding is a single sequential FFmpeg pass, audio is decoded once, and all writes are deterministic upserts. An ingestion fingerprint permits restart/skip behavior.
 
-There is no “replication worker” in this design. Horizontal ingestion workers may claim different videos, but SQLite/FAISS replication is a deployment concern, not a semantic pipeline stage.
+There is no “replication worker” in this design. Horizontal ingestion workers may claim different videos, but SQLite/FAISS/pgvector replication is a deployment concern, not a semantic pipeline stage. Each video is fingerprinted by extraction settings and model namespaces: re-running the same command skips completed videos, while a failed video can be retried without `--force`; changing model, dimensions, or chunk settings intentionally selects a new ingestion fingerprint.
 
 ## 2. Query planning and coarse retrieval
 
@@ -144,10 +158,10 @@ flowchart TD
     PLAN --> OQ["OCR terms or discovery wildcard"]
     PLAN --> AQ["Audio/prosody phrases"]
 
-    VQ --> VR["SigLIP2 text vector → FAISS"]
-    TQ --> TR["FTS5 / BM25"]
-    OQ --> OR["FTS5 or top-confidence OCR"]
-    AQ --> AR["FTS5 audio-event evidence"]
+    VQ --> VR["Gemini query vector → pgvector / FAISS"]
+    TQ --> TR["FTS5 / BM25 + Gemini semantic vector"]
+    OQ --> OR["FTS5 exact string + Gemini semantic vector"]
+    AQ --> AR["FTS5 audio-event evidence + Gemini semantic vector"]
 
     VR --> JOIN["Temporal relation join"]
     TR --> JOIN
@@ -293,7 +307,8 @@ flowchart TD
 |---|---|---|---|
 | ASR | `ASRBackend` | faster-whisper | WhisperX, cloud ASR, agency transcript |
 | OCR | `OCRBackend` | PaddleOCR | plate-specific OCR, EasyOCR |
-| Visual encoder | `VisualBackend` / `TextEncoder` | SigLIP2 | video-native encoder, CLIP, hosted embedding |
+| Semantic embedding | `EmbeddingBackend` / `TextEncoder` | OpenRouter Gemini Embedding 2 (`:batch` for offline indexing) | direct Gemini API, another multimodal embedding provider |
+| Local visual fallback | `VisualBackend` / `TextEncoder` | SigLIP2 | video-native encoder, CLIP |
 | Audio | `AudioBackend` | RMS/pitch + optional Silero/YAMNet | PANNs, CLAP, custom prosody classifier |
 | Text index | `IndexStore` | SQLite FTS5 | OpenSearch, Tantivy |
 | Vector index | `VectorIndex` | FAISS with exact fallback | Qdrant, Milvus, pgvector |

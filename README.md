@@ -16,8 +16,11 @@ flowchart LR
 
     subgraph OFF["1. Offline ingestion — once per video"]
         FF["FFmpeg / FFprobe"]
-        LOCAL["SigLIP2 · faster-whisper<br/>PaddleOCR · Silero/RMS/pitch · YAMNet"]
-        IDX["Timestamped evidence<br/>SQLite FTS5 + FAISS"]
+        CH["Scene / temporal chunks"]
+        GE["OpenRouter<br/>Gemini Embedding 2 :batch<br/>text · image · audio · video"]
+        EXACT["Whisper + PaddleOCR<br/>exact searchable evidence"]
+        CUES["RMS/pitch · Silero · YAMNet<br/>local audio cues"]
+        IDX["Timestamped evidence<br/>SQLite FTS5 + pgvector/FAISS"]
     end
 
     subgraph RET["2. Cheap query-time retrieval"]
@@ -37,7 +40,10 @@ flowchart LR
     TL["Optional TimeLens2 adapter"]
     OUT["video + [start,end]<br/>confidence + evidence"]
 
-    V --> FF --> LOCAL --> IDX
+    V --> FF
+    FF --> CH --> GE --> IDX
+    FF --> EXACT --> IDX
+    FF --> CUES --> IDX
     Q["Investigator query"] --> PLAN --> PAR
     IDX --> PAR --> FUSE --> AGENT
     AGENT --> TOOLS --> MEM --> AGENT
@@ -60,7 +66,7 @@ Retrieval scores create candidates only. They never become final evidence confid
 | ASR | Timestamped spoken words | Miranda rights, quoted speech, names, commands |
 | OCR | Timestamped visible characters | License plates, signs, badge or unit numbers |
 | Audio analysis | VAD, loudness, pitch, AudioSet events | Raised voice, sirens, gunshots, barking |
-| Visual embeddings | Open-vocabulary frame similarity | Clothing, vehicles, nighttime scenes, visible objects |
+| Gemini Embedding 2 | Unified text/image/audio/video semantic space | Clothing, vehicles, scenes, sounds, transcript/OCR meaning |
 | Gemini clips | Motion and cross-modal association | Handcuffing, traffic-stop sequence, who shouted, event causality |
 
 ASR cannot read a license plate, OCR cannot transcribe Miranda rights, and neither can establish a visual action. Each modality has a narrow job.
@@ -89,13 +95,22 @@ Set an OpenRouter key:
 export OPENROUTER_API_KEY="..."
 ```
 
-The default model is the OpenRouter slug `google/gemini-3.1-pro-preview`. Override it with `PATROLLENS_GEMINI_MODEL` or `--model`. The planner can use a separate model via `PATROLLENS_GEMINI_PLANNER_MODEL`. The optional `PATROLLENS_OPENROUTER_BASE_URL`, `PATROLLENS_OPENROUTER_HTTP_REFERER`, and `PATROLLENS_OPENROUTER_TITLE` settings are also supported.
+The default reasoning model is the OpenRouter slug `google/gemini-3.1-pro-preview`. Override it with `PATROLLENS_GEMINI_MODEL` or `--model`. The planner can use a separate model via `PATROLLENS_GEMINI_PLANNER_MODEL`. The optional `PATROLLENS_OPENROUTER_BASE_URL`, `PATROLLENS_OPENROUTER_HTTP_REFERER`, and `PATROLLENS_OPENROUTER_TITLE` settings are also supported.
 
-PatrolLens uses the OpenAI Python SDK with `https://openrouter.ai/api/v1`; it does not use the direct Google SDK. The provider-prefixed model slug is passed unchanged to OpenRouter. Local frame, clip, and audio observations are encoded as the API's `image_url`, `video_url`, and `input_audio` content parts.
+PatrolLens uses the OpenAI Python SDK with `https://openrouter.ai/api/v1`; it does not use the direct Google SDK. The provider-prefixed model slug is passed unchanged to OpenRouter. Offline indexing defaults to `google/gemini-embedding-2:batch` for document/media requests and `google/gemini-embedding-2` for query vectors. Local frame, clip, and audio observations are encoded as the API's `image_url`, `video_url`, and `input_audio` content parts.
+
+The embedding settings are configurable when resuming or rebuilding an index:
+
+```bash
+export PATROLLENS_EMBEDDING_MODEL=google/gemini-embedding-2
+export PATROLLENS_EMBEDDING_BATCH_MODEL=google/gemini-embedding-2:batch
+export PATROLLENS_EMBEDDING_QUERY_MODEL=google/gemini-embedding-2
+export PATROLLENS_EMBEDDING_DIMENSIONS=3072
+```
 
 ### 1. Ingest videos
 
-Core profile: SigLIP2, faster-whisper `large-v3-turbo`, PaddleOCR, and local RMS/pitch analysis:
+Core profile: Gemini Embedding 2 for semantic text/image/audio/video indexing, faster-whisper `large-v3-turbo` for exact spoken text, PaddleOCR for exact visible text, and local RMS/pitch analysis:
 
 ```bash
 patrol-lens ingest videos_corpus --index .patrol-lens --profile core
@@ -107,13 +122,15 @@ Full profile also enables Silero VAD and YAMNet:
 patrol-lens ingest videos_corpus --index .patrol-lens --profile full
 ```
 
+`--no-embedding-video` and `--no-embedding-images` reduce media upload volume while retaining text, ASR/OCR, and local audio indexing. `--no-embeddings` selects the legacy local SigLIP2 visual path and disables hosted semantic vectors.
+
 For a dependency-free metadata smoke test:
 
 ```bash
 patrol-lens ingest videos_corpus --index .patrol-lens-smoke --profile metadata
 ```
 
-Ingestion is fingerprinted and restartable. Re-running the same configuration skips completed videos. Use `--force` to rebuild evidence for matching assets.
+Ingestion is fingerprinted and restartable. Re-run the same command against the same `--index` to continue: completed videos are skipped, while failed or incomplete videos are retried and deterministic extracted media is reused. Do not use `--force` when continuing. Changing the embedding model, dimensions, chunking, or other extraction settings creates a new fingerprint; use the original settings to avoid re-indexing completed assets, and use `--force` only when an intentional rebuild is required.
 
 ## Traceable PostgreSQL + pgvector backend
 
@@ -136,7 +153,9 @@ Use the same `--backend postgres --database-url ...` flags for `retrieve`, `sear
 ```mermaid
 flowchart LR
     RAW["Raw video + extracted media"] --> E["pl_evidence\ncontent · timestamps · metadata\nevidence_hash"]
+    E --> GE["Gemini Embedding 2 :batch\ntext · image · audio · video"]
     E --> TX["One ACID transaction"]
+    GE --> TX
     TX --> V["pl_embeddings\npgvector + duplicated provenance\nFK evidence_id"]
     Q["Query embedding"] --> PG["pgvector cosine search"]
     PG --> ROW["PostgreSQL embedding row"]
@@ -200,7 +219,7 @@ Each accepted result contains:
 
 At the defaults, one 90-minute video produces 674 overlapping 16-second processing windows at an 8-second stride and about 5,400 sampled frames at 1 FPS. The audio track is decoded once. Evidence is stored by its true timestamp rather than duplicated as opaque window documents.
 
-At query time, FTS5 and FAISS reduce the full corpus to roughly 5–20 candidate intervals. Gemini receives only bounded observations—at most 12 frames, 30 seconds of audio, or 20 seconds of video per action—with a six-turn default budget. Memory grows as compact JSON summaries, not raw 90-minute media.
+At query time, exact FTS5 search is retained for literal ASR/OCR strings, while Gemini Embedding 2 query vectors search semantic transcript, OCR, audio, and visual evidence. FAISS or pgvector reduces the full corpus to roughly 5–20 candidate intervals. Gemini receives only bounded observations—at most 12 frames, 30 seconds of audio, or 20 seconds of video per action—with a six-turn default budget. Memory grows as compact JSON summaries, not raw 90-minute media.
 
 See [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md) for the formalization and detailed lifecycle.
 
@@ -256,4 +275,4 @@ Tests cover normalized storage, FTS/vector retrieval, multimodal temporal joinin
 
 ## Privacy boundary
 
-Raw corpus video, extracted ASR/OCR, indexes, and agent memory remain local. When full search is used, only the investigator query and selected short media observations are sent through OpenRouter to the configured Gemini model. Deployments still need agency-specific access control, encryption, retention, redaction, audit logging, and legal review; those are intentionally outside this prototype.
+Raw corpus video, extracted ASR/OCR, indexes, and agent memory remain local. Offline indexing sends bounded temporal video/image/audio chunks and transcript/OCR text to OpenRouter when Gemini Embedding 2 is enabled; query-time search sends the investigator query, and active search sends only selected short observations. Deployments still need agency-specific access control, encryption, retention, redaction, audit logging, and legal review; those are intentionally outside this prototype.

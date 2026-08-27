@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import mimetypes
 import os
 from pathlib import Path
 from typing import Any
 
-from ..config import DEFAULT_GEMINI_MODEL
+from ..config import (
+    DEFAULT_GEMINI_EMBEDDING_BATCH_MODEL,
+    DEFAULT_GEMINI_EMBEDDING_MODEL,
+    DEFAULT_GEMINI_MODEL,
+)
 
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MAX_INLINE_MEDIA_BYTES = 18 * 1024 * 1024
@@ -238,3 +243,241 @@ class OpenRouterJSONClient:
         if not text:
             raise RuntimeError("OpenRouter returned no structured text")
         return _parse_json(text)
+
+
+class OpenRouterEmbeddingClient:
+    """OpenRouter client for Gemini Embedding 2 text and media vectors.
+
+    ``model_name`` is the canonical model namespace stored with an embedding.
+    Offline document/media calls use OpenRouter's cheaper ``:batch`` model
+    variant, while query calls use the canonical model slug. Both routes are
+    expected to produce vectors in the same Gemini Embedding 2 space.
+
+    OpenRouter's embeddings endpoint represents multimodal input as an input
+    object containing a ``content`` array. The object is deliberately kept at
+    this provider boundary so the ingestion and retrieval layers only depend
+    on ``encode_*`` methods.
+    """
+
+    def __init__(
+        self,
+        model: str = DEFAULT_GEMINI_EMBEDDING_MODEL,
+        *,
+        batch_model: str | None = None,
+        query_model: str | None = None,
+        dimensions: int = 3072,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        http_referer: str | None = None,
+        title: str | None = None,
+        timeout_s: float = 120.0,
+        max_inline_media_bytes: int = DEFAULT_MAX_INLINE_MEDIA_BYTES,
+        media_batch_size: int = 6,
+    ) -> None:
+        if dimensions <= 0 or dimensions > 3072:
+            raise ValueError("Gemini Embedding 2 dimensions must be between 1 and 3072")
+        if media_batch_size <= 0:
+            raise ValueError("embedding media batch size must be positive")
+        self.model_name = model.removesuffix(":batch")
+        self.query_model = query_model or self.model_name
+        self.batch_model = batch_model or (
+            DEFAULT_GEMINI_EMBEDDING_BATCH_MODEL
+            if self.model_name == DEFAULT_GEMINI_EMBEDDING_MODEL
+            else (model if model.endswith(":batch") else f"{self.model_name}:batch")
+        )
+        self.dimensions = dimensions
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        self.base_url = base_url or os.getenv("PATROLLENS_OPENROUTER_BASE_URL", DEFAULT_OPENROUTER_BASE_URL)
+        self.http_referer = http_referer or os.getenv("PATROLLENS_OPENROUTER_HTTP_REFERER")
+        self.title = title or os.getenv("PATROLLENS_OPENROUTER_TITLE")
+        self.timeout_s = timeout_s
+        self.max_inline_media_bytes = max_inline_media_bytes
+        self.media_batch_size = media_batch_size
+        self._client: Any = None
+        if not self.api_key:
+            raise RuntimeError("OPENROUTER_API_KEY is required for Gemini Embedding 2")
+
+    def _load(self) -> Any:
+        if self._client is None:
+            try:
+                from openai import OpenAI
+            except ImportError as exc:
+                raise RuntimeError("openai is not installed; install patrol-lens[openrouter]") from exc
+            self._client = OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=self.timeout_s,
+            )
+        return self._client
+
+    def _embedding_headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        if self.http_referer:
+            headers["HTTP-Referer"] = self.http_referer
+        if self.title:
+            headers["X-OpenRouter-Title"] = self.title
+        return headers
+
+    @staticmethod
+    def _field(value: Any, name: str, default: Any = None) -> Any:
+        if isinstance(value, dict):
+            return value.get(name, default)
+        return getattr(value, name, default)
+
+    _mime = staticmethod(OpenRouterJSONClient._mime)
+    _audio_format = staticmethod(OpenRouterJSONClient._audio_format)
+
+    def _request(
+        self,
+        inputs: list[Any],
+        *,
+        model: str,
+        single_text: bool = False,
+    ) -> list[list[float]]:
+        if not inputs:
+            return []
+        payload: dict[str, Any] = {
+            "model": model,
+            "input": inputs[0] if single_text else inputs,
+            "dimensions": self.dimensions,
+            "encoding_format": "float",
+        }
+        headers = self._embedding_headers()
+        if headers:
+            payload["extra_headers"] = headers
+        response = self._load().embeddings.create(**payload)
+        data = self._field(response, "data", []) or []
+        if not isinstance(data, list):
+            raise RuntimeError("OpenRouter returned an invalid embeddings response")
+        ordered = sorted(data, key=lambda item: int(self._field(item, "index", 0)))
+        if len(ordered) != len(inputs):
+            raise RuntimeError(
+                f"OpenRouter returned {len(ordered)} embeddings for {len(inputs)} inputs"
+            )
+        vectors: list[list[float]] = []
+        for item in ordered:
+            raw_vector = self._field(item, "embedding")
+            if not isinstance(raw_vector, (list, tuple)) or not raw_vector:
+                raise RuntimeError("OpenRouter returned an empty embedding vector")
+            vector = [float(value) for value in raw_vector]
+            if not all(math.isfinite(value) for value in vector):
+                raise RuntimeError("OpenRouter returned a non-finite embedding vector")
+            if len(vector) != self.dimensions:
+                raise RuntimeError(
+                    f"OpenRouter returned {len(vector)} dimensions; expected {self.dimensions}"
+                )
+            vectors.append(vector)
+        return vectors
+
+    @staticmethod
+    def _document_text(text: str) -> str:
+        return f"title: none | text: {text}"
+
+    @staticmethod
+    def _query_text(text: str) -> str:
+        return f"task: search result | query: {text}"
+
+    def encode_text(self, text: str) -> list[float]:
+        """Encode a query using the asymmetric search-query instruction."""
+
+        return self._request(
+            [self._query_text(text)],
+            model=self.query_model,
+            single_text=True,
+        )[0]
+
+    def encode_texts(self, texts: list[str]) -> list[list[float]]:
+        """Encode document text in a discounted offline batch request."""
+
+        if not texts:
+            return []
+        vectors: list[list[float]] = []
+        for offset in range(0, len(texts), self.media_batch_size):
+            vectors.extend(
+                self._request(
+                    [self._document_text(text) for text in texts[offset : offset + self.media_batch_size]],
+                    model=self.batch_model,
+                )
+            )
+        return vectors
+
+    encode_documents = encode_texts
+
+    def _media_input(self, path: str | Path, context_text: str | None = None) -> tuple[dict[str, Any], str, int]:
+        media_path = Path(path)
+        if not media_path.is_file():
+            raise FileNotFoundError(media_path)
+        size = media_path.stat().st_size
+        if size > self.max_inline_media_bytes:
+            raise ValueError(
+                f"media {media_path} exceeds {self.max_inline_media_bytes} inline bytes"
+            )
+        part = OpenRouterJSONClient._media_part(self, media_path)
+        content: list[dict[str, Any]] = []
+        if context_text:
+            content.append({"type": "text", "text": context_text})
+        content.append(part)
+        mime_type = self._mime(media_path)
+        kind = mime_type.split("/", 1)[0]
+        return {"content": content}, kind, size
+
+    def encode_media(
+        self,
+        path: str | Path,
+        *,
+        context_text: str | None = None,
+    ) -> list[float]:
+        return self.encode_media_many([path], context_texts=[context_text] if context_text else None)[0]
+
+    def encode_media_many(
+        self,
+        paths: list[str | Path],
+        *,
+        context_texts: list[str] | None = None,
+    ) -> list[list[float]]:
+        """Encode local image/audio/video files, preserving input order.
+
+        Images are grouped up to ``media_batch_size``. Audio and video are
+        sent one item per request because their provider-side token budgets
+        are duration-based and substantially larger than image requests.
+        """
+
+        if not paths:
+            return []
+        if context_texts is not None and len(context_texts) != len(paths):
+            raise ValueError("context_texts must have one entry per media path")
+        items = [
+            self._media_input(path, context_texts[index] if context_texts else None)
+            for index, path in enumerate(paths)
+        ]
+        outputs: list[list[float]] = []
+        batch: list[dict[str, Any]] = []
+        batch_kind: str | None = None
+        batch_bytes = 0
+        for item, kind, size in items:
+            max_items = self.media_batch_size if kind == "image" else 1
+            incompatible = batch and (batch_kind != kind or len(batch) >= max_items)
+            too_large = batch and batch_bytes + size > self.max_inline_media_bytes
+            if incompatible or too_large:
+                outputs.extend(self._request(batch, model=self.batch_model))
+                batch = []
+                batch_kind = None
+                batch_bytes = 0
+            batch.append(item)
+            batch_kind = kind
+            batch_bytes += size
+        if batch:
+            outputs.extend(self._request(batch, model=self.batch_model))
+        return outputs
+
+    def encode_image(self, path: str | Path) -> list[float]:
+        return self.encode_media(path)
+
+    def encode_images(self, paths: list[str | Path]) -> list[list[float]]:
+        return self.encode_media_many(paths)
+
+    def encode_audio(self, path: str | Path) -> list[float]:
+        return self.encode_media(path)
+
+    def encode_video(self, path: str | Path) -> list[float]:
+        return self.encode_media(path)

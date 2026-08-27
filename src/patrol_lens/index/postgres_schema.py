@@ -102,6 +102,7 @@ BEGIN
          e.confidence,
          e.evidence_hash,
          COALESCE(NULLIF(e.metadata->>'source_uri', ''),
+                  NULLIF(e.metadata->>'media_path', ''),
                   NULLIF(e.metadata->>'frame_path', ''), a.source_uri) AS source_uri,
          a.sha256 AS source_sha256
     INTO canonical
@@ -148,6 +149,7 @@ BEGIN
          end_ms = NEW.end_ms,
          modality = NEW.modality,
          source_uri = COALESCE(NULLIF(NEW.metadata->>'source_uri', ''),
+                               NULLIF(NEW.metadata->>'media_path', ''),
                                NULLIF(NEW.metadata->>'frame_path', ''),
                                (SELECT source_uri FROM pl_assets WHERE id = NEW.video_id)),
          evidence_text = NEW.content,
@@ -173,6 +175,7 @@ AS $$
 BEGIN
   UPDATE pl_embeddings p
      SET source_uri = COALESCE(NULLIF(e.metadata->>'source_uri', ''),
+                               NULLIF(e.metadata->>'media_path', ''),
                                NULLIF(e.metadata->>'frame_path', ''), NEW.source_uri),
          source_sha256 = NEW.sha256
     FROM pl_evidence e

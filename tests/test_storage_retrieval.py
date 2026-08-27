@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 from patrol_lens.config import RetrievalConfig
-from patrol_lens.domain import EmbeddingRecord, Evidence, VideoAsset
+from patrol_lens.domain import EmbeddingRecord, Evidence, QueryPlan, VideoAsset
 from patrol_lens.index import IndexStore, SQLiteVectorIndex
 from patrol_lens.retrieval import CoarseRetriever, HeuristicQueryPlanner
 from patrol_lens.text import HashEmbeddingEncoder
+
+
+class FixedSemanticEncoder:
+    model_name = "fake-gemini-embedding-2"
+
+    def encode_text(self, _text):
+        return [1.0, 0.0]
 
 
 def make_store(tmp_path):
@@ -86,4 +93,59 @@ def test_ocr_discovery_uses_unknown_text_branch(tmp_path):
     assert plan.ocr_queries == ["*"]
     assert set(plan.required_modalities) == {"visual", "ocr"}
     assert store.top_evidence("ocr")[0][0].content == "ABC 1234"
+    store.close()
+
+
+def test_semantic_text_branch_augments_exact_fts(tmp_path):
+    store = make_store(tmp_path)
+    evidence = Evidence(
+        "semantic-transcript",
+        "video-1",
+        20_000,
+        24_000,
+        "transcript",
+        "The subject states a statutory advisement",
+        0.9,
+        "fake-whisper",
+    )
+    encoder = FixedSemanticEncoder()
+    store.add_evidence_and_embeddings(
+        [evidence],
+        [EmbeddingRecord("semantic-vector", evidence.id, "transcript", encoder.model_name, [1.0, 0.0])],
+    )
+    retriever = CoarseRetriever(
+        store,
+        vector_index=SQLiteVectorIndex(store),
+        semantic_encoder=encoder,
+        config=RetrievalConfig(top_k=5),
+    )
+
+    plan = QueryPlan(
+        original_text="Find the legal warning",
+        transcript_queries=["unrelated semantic query"],
+        required_modalities=["transcript"],
+    )
+    candidates = retriever.retrieve_plan(plan)
+
+    assert candidates
+    assert candidates[0].evidence == [evidence]
+    assert "transcript:0:semantic" in candidates[0].branch_scores
+    store.close()
+
+
+def test_vector_search_ignores_mixed_dimensions_during_migration(tmp_path):
+    store = make_store(tmp_path)
+    first = Evidence("visual-2d", "video-1", 1_000, 2_000, "visual", "first", 1.0, "embedding")
+    second = Evidence("visual-3d", "video-1", 3_000, 4_000, "visual", "second", 1.0, "embedding")
+    store.add_evidence_and_embeddings(
+        [first, second],
+        [
+            EmbeddingRecord("vector-2d", first.id, "visual", "gemini", [1.0, 0.0]),
+            EmbeddingRecord("vector-3d", second.id, "visual", "gemini", [1.0, 0.0, 0.0]),
+        ],
+    )
+
+    hits = SQLiteVectorIndex(store).search([1.0, 0.0], modality="visual", model="gemini", limit=5)
+
+    assert [item.id for item, _score in hits] == [first.id]
     store.close()

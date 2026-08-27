@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 
 DEFAULT_GEMINI_MODEL = "google/gemini-3.1-pro-preview"
+DEFAULT_GEMINI_EMBEDDING_MODEL = "google/gemini-embedding-2"
+DEFAULT_GEMINI_EMBEDDING_BATCH_MODEL = "google/gemini-embedding-2:batch"
 
 
 @dataclass(frozen=True)
@@ -16,6 +18,10 @@ class IngestionConfig:
     batch_size: int = 16
     ocr_min_confidence: float = 0.45
     schema_version: str = "2.0.0"
+    embedding_dimensions: int = 3072
+    embedding_batch_size: int = 6
+    embed_video: bool = True
+    embed_images: bool = True
 
 
 @dataclass(frozen=True)

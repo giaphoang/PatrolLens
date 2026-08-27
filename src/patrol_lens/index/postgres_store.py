@@ -444,6 +444,7 @@ class PostgresIndexStore:
                     dimensions, metadata)
                    SELECT %s, e.id, e.video_id, e.start_ms, e.end_ms, e.modality,
                           COALESCE(NULLIF(e.metadata->>'source_uri', ''),
+                                   NULLIF(e.metadata->>'media_path', ''),
                                    NULLIF(e.metadata->>'frame_path', ''), a.source_uri),
                           e.segment_id, e.content, e.metadata, e.source, %s, e.confidence,
                           e.evidence_hash, a.sha256, %s, %s::vector, %s, %s::jsonb

@@ -62,8 +62,8 @@ class FaissVectorIndex:
             return False
         return True
 
-    def _paths(self, modality: str, model: str) -> tuple[Path, Path]:
-        key = hashlib.sha256(f"{modality}:{model}".encode()).hexdigest()[:20]
+    def _paths(self, modality: str, model: str, dimensions: int) -> tuple[Path, Path]:
+        key = hashlib.sha256(f"{modality}:{model}:{dimensions}".encode()).hexdigest()[:20]
         return self.root / f"{key}.faiss", self.root / f"{key}.json"
 
     def rebuild(self, *, modality: str, model: str) -> int:
@@ -72,20 +72,32 @@ class FaissVectorIndex:
             import numpy as np
         except ImportError as exc:
             raise RuntimeError("faiss-cpu and numpy are required to build the FAISS index") from exc
+        # A model namespace may contain vectors at more than one configured
+        # dimension over time. Remove indexes for this namespace before
+        # writing the current per-dimension set so stale vectors are never
+        # selected after a rebuild.
+        for map_path in self.root.glob("*.json"):
+            try:
+                mapping = json.loads(map_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(mapping, dict) and mapping.get("modality") == modality and mapping.get("model") == model:
+                map_path.unlink(missing_ok=True)
+                map_path.with_suffix(".faiss").unlink(missing_ok=True)
         records = self.store.embedding_records(modality, model)
-        index_path, map_path = self._paths(modality, model)
-        if not records:
-            index_path.unlink(missing_ok=True)
-            map_path.unlink(missing_ok=True)
-            return 0
-        identifiers = [item[0] for item in records]
-        matrix = np.asarray([item[1] for item in records], dtype="float32")
-        faiss.normalize_L2(matrix)
-        index = faiss.IndexFlatIP(int(matrix.shape[1]))
-        index.add(matrix)
-        faiss.write_index(index, str(index_path))
-        map_path.write_text(json.dumps({"modality": modality, "model": model, "ids": identifiers}))
-        return len(identifiers)
+        by_dimensions: dict[int, list[tuple[str, list[float]]]] = {}
+        for identifier, vector in records:
+            by_dimensions.setdefault(len(vector), []).append((identifier, vector))
+        for dimensions, dimension_records in by_dimensions.items():
+            index_path, map_path = self._paths(modality, model, dimensions)
+            identifiers = [item[0] for item in dimension_records]
+            matrix = np.asarray([item[1] for item in dimension_records], dtype="float32")
+            faiss.normalize_L2(matrix)
+            index = faiss.IndexFlatIP(dimensions)
+            index.add(matrix)
+            faiss.write_index(index, str(index_path))
+            map_path.write_text(json.dumps({"modality": modality, "model": model, "dimensions": dimensions, "ids": identifiers}))
+        return len(records)
 
     def search(
         self, vector: list[float], *, modality: str, model: str, limit: int = 60
@@ -95,7 +107,8 @@ class FaissVectorIndex:
             import numpy as np
         except ImportError as exc:
             raise RuntimeError("faiss-cpu and numpy are required for FAISS search") from exc
-        index_path, map_path = self._paths(modality, model)
+        dimensions = len(vector)
+        index_path, map_path = self._paths(modality, model, dimensions)
         if not index_path.exists() or not map_path.exists():
             return []
         mapping = json.loads(map_path.read_text())
@@ -130,7 +143,7 @@ class AutoVectorIndex:
     def search(
         self, vector: list[float], *, modality: str, model: str, limit: int = 60
     ) -> list[tuple[Evidence, float]]:
-        index_path, map_path = self.faiss._paths(modality, model)
+        index_path, map_path = self.faiss._paths(modality, model, len(vector))
         if self.faiss.available() and index_path.exists() and map_path.exists():
             return self.faiss.search(vector, modality=modality, model=model, limit=limit)
         return self.sqlite.search(vector, modality=modality, model=model, limit=limit)

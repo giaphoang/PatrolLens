@@ -354,6 +354,12 @@ class IndexStore:
     ) -> list[tuple[Evidence, float]]:
         scored: list[tuple[Evidence, float]] = []
         for evidence_id, candidate in self.embedding_records(modality, model):
+            # A model namespace can legitimately contain old and new output
+            # dimensions while an index is being migrated. Only compare
+            # vectors compatible with the query; PostgreSQL applies the same
+            # constraint in its dimensions predicate.
+            if len(candidate) != len(vector):
+                continue
             item = self.get_evidence(evidence_id)
             if item:
                 scored.append((item, cosine(vector, candidate)))

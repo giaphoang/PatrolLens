@@ -24,12 +24,14 @@ class CoarseRetriever:
         *,
         planner: QueryPlanner | None = None,
         visual_encoder: TextEncoder | None = None,
+        semantic_encoder: TextEncoder | None = None,
         vector_index: VectorIndex | PostgresVectorIndex | None = None,
         config: RetrievalConfig | None = None,
     ) -> None:
         self.store = store
         self.planner = planner or HeuristicQueryPlanner()
         self.visual_encoder = visual_encoder
+        self.semantic_encoder = semantic_encoder
         self.vector_index = vector_index or AutoVectorIndex(store)
         self.config = config or RetrievalConfig()
 
@@ -49,18 +51,51 @@ class CoarseRetriever:
                 branch,
                 self.store.search_text(query, modalities=["transcript"], limit=limit),
             )
+            if self.semantic_encoder:
+                semantic_branch = f"{branch}:semantic"
+                branches[semantic_branch] = self._hits(
+                    semantic_branch,
+                    self.vector_index.search(
+                        self.semantic_encoder.encode_text(query),
+                        modality="transcript",
+                        model=self.semantic_encoder.model_name,
+                        limit=limit,
+                    ),
+                )
         for index, query in enumerate(plan.ocr_queries):
             branch = f"ocr:{index}"
             pairs = self.store.top_evidence("ocr", limit=limit) if query == "*" else self.store.search_text(
                 query, modalities=["ocr"], limit=limit
             )
             branches[branch] = self._hits(branch, pairs)
+            if self.semantic_encoder and query != "*":
+                semantic_branch = f"{branch}:semantic"
+                branches[semantic_branch] = self._hits(
+                    semantic_branch,
+                    self.vector_index.search(
+                        self.semantic_encoder.encode_text(query),
+                        modality="ocr",
+                        model=self.semantic_encoder.model_name,
+                        limit=limit,
+                    ),
+                )
         for index, query in enumerate(plan.audio_queries):
             branch = f"audio_event:{index}"
             branches[branch] = self._hits(
                 branch,
                 self.store.search_text(query, modalities=["audio_event"], limit=limit),
             )
+            if self.semantic_encoder:
+                semantic_branch = f"{branch}:semantic"
+                branches[semantic_branch] = self._hits(
+                    semantic_branch,
+                    self.vector_index.search(
+                        self.semantic_encoder.encode_text(query),
+                        modality="audio_event",
+                        model=self.semantic_encoder.model_name,
+                        limit=limit,
+                    ),
+                )
         if self.visual_encoder:
             for index, query in enumerate(plan.visual_queries):
                 branch = f"visual:{index}"
