@@ -1,0 +1,26 @@
+{
+  "inspected_at": "2026-08-26",
+  "upstreams": [
+    {
+      "name": "OmniAgent",
+      "repository": "https://github.com/harryhsing/omniagent",
+      "commit": "adea8a098ab681cacdc789b16b0acc4b2bd36872",
+      "use": "Observation-action environment, bounded media tools, durable evidence memory",
+      "integration": "independent implementation; no vendored source"
+    },
+    {
+      "name": "Video-RAG",
+      "repository": "https://github.com/Leon1207/Video-RAG-master",
+      "commit": "4400aa4d0674fda6501688a60da7cdee925c1fa1",
+      "use": "Auxiliary OCR/ASR/visual evidence before an LVLM",
+      "integration": "paper/repository architecture inspiration only; no vendored source"
+    },
+    {
+      "name": "TimeLens2",
+      "repository": "https://github.com/MCG-NJU/TimeLens2",
+      "commit": "f828dde4ee7f2aea5022c6bd7f5aa1d42d4b3f35",
+      "use": "optional temporal-grounding specialist",
+      "integration": "disabled opt-in subprocess adapter; no vendored source"
+    }
+  ]
+}

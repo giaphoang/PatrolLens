@@ -4,24 +4,36 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .retrieval import Retriever
+from .retrieval.search import CoarseRetriever
 
 
-def evaluate_file(path: str | Path, retriever: Retriever, top_k: int = 10) -> dict[str, Any]:
+def temporal_iou(left: tuple[int, int], right: tuple[int, int]) -> float:
+    intersection = max(0, min(left[1], right[1]) - max(left[0], right[0]))
+    union = max(left[1], right[1]) - min(left[0], right[0])
+    return intersection / union if union else 0.0
+
+
+def evaluate_file(path: str | Path, retriever: CoarseRetriever, top_k: int = 10) -> dict[str, Any]:
     rows = [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
-    query_results = []
+    details: list[dict[str, Any]] = []
     hits = 0
-    retrieved = 0
+    best_ious: list[float] = []
     for row in rows:
-        _plan, candidates, _status = retriever.search(row["query"], top_k=top_k, max_rerank=0)
-        predicted = {(candidate.segment.video_id, candidate.segment.start_ms, candidate.segment.end_ms) for candidate in candidates}
-        expected = {tuple(item) for item in row.get("relevant", [])}
-        match = False
+        _plan, candidates = retriever.retrieve(row["query"])
+        candidates = candidates[:top_k]
+        expected = row.get("relevant", [])
+        best = 0.0
         for video_id, start_ms, end_ms in expected:
-            if any(candidate.segment.video_id == video_id and candidate.segment.end_ms > start_ms and candidate.segment.start_ms < end_ms for candidate in candidates):
-                match = True
-                break
-        hits += int(match)
-        retrieved += len(predicted)
-        query_results.append({"query": row["query"], "matched": match, "result_count": len(predicted)})
-    return {"queries": len(rows), "queries_with_hit": hits, "hit_rate": hits / len(rows) if rows else 0.0, "results_returned": retrieved, "details": query_results}
+            for candidate in candidates:
+                if candidate.video_id == video_id:
+                    best = max(best, temporal_iou((start_ms, end_ms), (candidate.start_ms, candidate.end_ms)))
+        matched = best > 0
+        hits += int(matched)
+        best_ious.append(best)
+        details.append({"query": row["query"], "matched": matched, "best_temporal_iou": best})
+    return {
+        "queries": len(rows),
+        "recall_at_k": hits / len(rows) if rows else 0.0,
+        "mean_best_temporal_iou": sum(best_ious) / len(best_ious) if best_ious else 0.0,
+        "details": details,
+    }

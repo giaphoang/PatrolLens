@@ -1,20 +1,54 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
+Modality = Literal[
+    "visual",
+    "transcript",
+    "ocr",
+    "audio",
+    "audio_event",
+    "metadata",
+]
+Relation = Literal["overlap", "before", "after", "sequence", "any"]
+SupportStatus = Literal["supported", "rejected", "uncertain"]
+ActionType = Literal["get_frames", "get_audio", "get_clip", "answer"]
 
-Modality = Literal["visual", "clip", "text", "ocr", "audio", "metadata"]
 
-
-def _clean(value: Any) -> Any:
+def jsonable(value: Any) -> Any:
     if hasattr(value, "to_dict"):
         return value.to_dict()
-    if isinstance(value, list):
-        return [_clean(item) for item in value]
+    if isinstance(value, (list, tuple)):
+        return [jsonable(item) for item in value]
     if isinstance(value, dict):
-        return {key: _clean(item) for key, item in value.items()}
+        return {str(key): jsonable(item) for key, item in value.items()}
     return value
+
+
+def hash_evidence(evidence: Evidence) -> str:
+    """Stable hash of the raw, timestamped evidence record.
+
+    This deliberately excludes derived embeddings. It lets a database row
+    prove which evidence payload and timestamp produced an embedding.
+    """
+
+    payload = {
+        "id": evidence.id,
+        "video_id": evidence.video_id,
+        "segment_id": evidence.segment_id,
+        "start_ms": evidence.start_ms,
+        "end_ms": evidence.end_ms,
+        "modality": evidence.modality,
+        "content": evidence.content,
+        "confidence": evidence.confidence,
+        "source": evidence.source,
+        "metadata": evidence.metadata,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -26,6 +60,8 @@ class VideoAsset:
     fps: float | None = None
     width: int | None = None
     height: int | None = None
+    has_audio: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -33,6 +69,8 @@ class VideoAsset:
 
 @dataclass(frozen=True)
 class Segment:
+    """A deterministic processing window, not a final search result."""
+
     id: str
     video_id: str
     start_ms: int
@@ -45,16 +83,18 @@ class Segment:
 
 
 @dataclass(frozen=True)
-class Observation:
+class Evidence:
+    """Canonical timestamped observation shared by every modality."""
+
     id: str
-    segment_id: str
     video_id: str
-    modality: Modality
     start_ms: int
     end_ms: int
-    text: str | None = None
-    label: str | None = None
-    confidence: float | None = None
+    modality: Modality
+    content: str
+    confidence: float
+    source: str
+    segment_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -64,7 +104,7 @@ class Observation:
 @dataclass(frozen=True)
 class EmbeddingRecord:
     id: str
-    segment_id: str
+    evidence_id: str
     modality: Modality
     model: str
     vector: list[float]
@@ -77,72 +117,169 @@ class EmbeddingRecord:
 @dataclass(frozen=True)
 class QueryPlan:
     original_text: str
-    modality_weights: dict[str, float]
-    text_terms: list[str] = field(default_factory=list)
-    visual_concepts: list[str] = field(default_factory=list)
-    ocr_terms: list[str] = field(default_factory=list)
-    audio_intent: str | None = None
-    temporal_constraints: list[str] = field(default_factory=list)
-    conjunctions: list[str] = field(default_factory=list)
+    visual_queries: list[str] = field(default_factory=list)
+    transcript_queries: list[str] = field(default_factory=list)
+    ocr_queries: list[str] = field(default_factory=list)
+    audio_queries: list[str] = field(default_factory=list)
+    required_modalities: list[Modality] = field(default_factory=list)
+    modality_weights: dict[str, float] = field(default_factory=dict)
+    relation: Relation = "any"
+    relation_tolerance_ms: int = 4_000
+    target: str = "event"
+    constraints: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class RetrievalHit:
+    branch: str
+    rank: int
+    score: float
+    evidence: Evidence
+
+
+@dataclass
+class CandidateInterval:
+    id: str
+    video_id: str
+    start_ms: int
+    end_ms: int
+    score: float = 0.0
+    evidence: list[Evidence] = field(default_factory=list)
+    branch_scores: dict[str, float] = field(default_factory=dict)
+    covered_modalities: list[str] = field(default_factory=list)
+    missing_modalities: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def duration_ms(self) -> int:
+        return max(0, self.end_ms - self.start_ms)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "video_id": self.video_id,
+            "start_ms": self.start_ms,
+            "end_ms": self.end_ms,
+            "start_s": round(self.start_ms / 1000, 3),
+            "end_s": round(self.end_ms / 1000, 3),
+            "score": self.score,
+            "evidence": [item.to_dict() for item in self.evidence],
+            "branch_scores": dict(self.branch_scores),
+            "covered_modalities": list(self.covered_modalities),
+            "missing_modalities": list(self.missing_modalities),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class AgentAction:
+    type: ActionType
+    start_ms: int | None = None
+    end_ms: int | None = None
+    fps: float | None = None
+    num_frames: int | None = None
+    answer: str | None = None
+    status: SupportStatus | None = None
+    confidence: float | None = None
+
+    def signature(self) -> str:
+        return f"{self.type}:{self.start_ms}:{self.end_ms}:{self.fps}:{self.num_frames}:{self.answer}"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 @dataclass
-class Candidate:
-    segment: Segment
-    score: float = 0.0
-    modality_scores: dict[str, float] = field(default_factory=dict)
-    evidence: list[Observation] = field(default_factory=list)
-    rerank_score: float | None = None
-    confidence: float | None = None
-    warnings: list[str] = field(default_factory=list)
+class ToolObservation:
+    id: str
+    action: AgentAction
+    start_ms: int
+    end_ms: int
+    media_paths: list[str] = field(default_factory=list)
+    summary: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "segment": self.segment.to_dict(),
-            "score": self.score,
-            "modality_scores": self.modality_scores,
-            "evidence": [_clean(item) for item in self.evidence],
-            "rerank_score": self.rerank_score,
-            "confidence": self.confidence,
-            "warnings": self.warnings,
+            "id": self.id,
+            "action": self.action.to_dict(),
+            "start_ms": self.start_ms,
+            "end_ms": self.end_ms,
+            "media_paths": list(self.media_paths),
+            "summary": self.summary,
+            "metadata": dict(self.metadata),
         }
 
 
 @dataclass(frozen=True)
-class RerankDecision:
-    match: Literal["yes", "no", "uncertain"]
-    event_start_offset_ms: int = 0
-    event_end_offset_ms: int = 0
-    evidence: list[dict[str, Any]] = field(default_factory=list)
-    confidence: float = 0.0
-    warning: str | None = None
+class AgentDecision:
+    assessment: str
+    action: AgentAction
 
 
-def result_dict(query: str, plan: QueryPlan, candidates: list[Candidate], *, index_version: str, rerank_status: str) -> dict[str, Any]:
-    results: list[dict[str, Any]] = []
-    for candidate in candidates:
-        segment = candidate.segment
-        results.append(
-            {
-                "video_id": segment.video_id,
-                "segment_id": segment.id,
-                "start_s": round(segment.start_ms / 1000, 3),
-                "end_s": round(segment.end_ms / 1000, 3),
-                "score": round(candidate.score, 6),
-                "rerank_score": None if candidate.rerank_score is None else round(candidate.rerank_score, 6),
-                "confidence": None if candidate.confidence is None else round(candidate.confidence, 6),
-                "modality_scores": candidate.modality_scores,
-                "evidence": [_clean(item) for item in candidate.evidence],
-                "warnings": candidate.warnings,
-            }
-        )
-    return {
-        "query": query,
-        "query_plan": plan.to_dict(),
-        "index_version": index_version,
-        "rerank_status": rerank_status,
-        "results": results,
-    }
+@dataclass(frozen=True)
+class AgentConclusion:
+    status: SupportStatus
+    description: str
+    start_ms: int
+    end_ms: int
+    confidence: float
+    missing_evidence: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+    status: SupportStatus
+    event_description: str
+    start_ms: int
+    end_ms: int
+    confidence: float
+    evidence: dict[str, list[str]] = field(default_factory=dict)
+    missing_evidence: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class EvidenceResult:
+    video_id: str
+    video_path: str
+    start_ms: int
+    end_ms: int
+    confidence: float
+    description: str
+    evidence: dict[str, list[str]]
+    retrieval_score: float
+    grounding_method: str
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["start_s"] = round(self.start_ms / 1000, 3)
+        payload["end_s"] = round(self.end_ms / 1000, 3)
+        return payload
+
+
+@dataclass(frozen=True)
+class SearchResponse:
+    query: str
+    plan: QueryPlan
+    results: list[EvidenceResult]
+    candidates_examined: int
+    index_version: str
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "query": self.query,
+            "query_plan": self.plan.to_dict(),
+            "results": [item.to_dict() for item in self.results],
+            "candidates_examined": self.candidates_examined,
+            "index_version": self.index_version,
+            "warnings": list(self.warnings),
+        }

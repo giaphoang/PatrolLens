@@ -1,154 +1,355 @@
-# PatrolLens System Design
+# PatrolLens system design
 
 ## Problem formalization
 
-Let the corpus be a set of videos:
+Given a corpus of videos \(V = \{v_1, \ldots, v_n\}\), each potentially 90 minutes long, and a natural-language query \(q\), return a ranked set:
 
 \[
-\mathcal{V} = \{v_1, v_2, \ldots, v_n\}, \qquad v_i \text{ has duration } T_i \leq 90\text{ minutes}.
+R(q) = \{(v_i, [t_s,t_e], p, E)\}
 \]
 
-For each video, the ingestion pipeline creates timestamped observations from several modalities:
+where `[t_s,t_e]` is the smallest interval that supports the complete query, `p` is verifier confidence, and `E` is modality-specific evidence.
+
+Offline extraction creates canonical observations:
 
 \[
-O_i^m = \{(a, b, x, c)\}, \qquad m \in \{visual, clip, audio, speech, OCR\}
+e = (id, video\_id, t_s, t_e, modality, content/vector, confidence, source)
 \]
 
-where `[a,b]` is a source-video interval, `x` is an embedding, transcript, OCR string, or acoustic feature, and `c` is an optional confidence value.
+This representation is the architectural contract. Models and indexes can change as long as they produce or consume the same observation shape.
 
-Given a natural-language query `q`, the system must return a ranked set of intervals:
+The system optimizes for precision on hard event queries. A retrieved frame containing a red jacket is evidence for an entity, not proof that the entity shouted. A final result must satisfy all of the query's entity, action, temporal, audio-language, and cross-modal attribution constraints.
 
-\[
-R(q) = \{(v_i, a, b, score, evidence)\}
-\]
-
-The desired result is not merely a similar frame. It is an interval where the queried event is supported by the appropriate evidence, including temporal order and cross-modal relationships.
-
-The conceptual ranking function is:
-
-\[
-Score(q,s) = \operatorname{RRF}(q,s) + \lambda\,TemporalConsistency(q,s) + \mu\,EvidenceSupport(q,s)
-\]
-
-The implementation approximates this with modality-specific retrieval, reciprocal-rank fusion, temporal merging, and a final multimodal verifier. Precision is prioritized over recall for the final returned results; low-confidence matches remain explicitly marked as uncertain.
-
-## Architecture
+## Overall architecture
 
 ```mermaid
 flowchart LR
-    V[Body-camera videos<br/>up to 90 minutes] --> ING[Ingestion coordinator]
-    ING --> META[FFprobe metadata<br/>source timeline]
-    ING --> WIN[Overlapping temporal windows<br/>16s window / 8s stride]
+    V["38 bodycam videos<br/>≤ 90 min each"]
 
-    WIN --> ASR[ASR adapter<br/>word-level timestamps]
-    WIN --> OCR[OCR adapter<br/>text, boxes, confidence]
-    WIN --> FRAME[Frame sampler<br/>1 FPS keyframes]
-    WIN --> AUDIO[Audio analyzer<br/>VAD, RMS, pitch, prosody]
-    FRAME --> VIS[Visual encoder<br/>SigLIP2 frame vectors]
-    WIN --> ANN[Optional clip annotation<br/>OpenRouter short clip]
+    subgraph OFF["1. Offline multimodal ingestion"]
+        E["Cheap local models"]
+        IDX["Timestamped evidence index"]
+    end
 
-    ASR --> FTS[(SQLite FTS<br/>transcript index)]
+    subgraph RET["2. Video-RAG-style retrieval"]
+        QP["Gemini query planner"]
+        SEARCH["Multimodal branch search"]
+        FUSE["Temporal join + weighted RRF"]
+    end
+
+    subgraph ACTIVE["3. OmniAgent-style active perception"]
+        GEM["Gemini 3.1 Pro"]
+        TOOLS["get_frames<br/>get_audio<br/>get_clip"]
+        MEM["Persistent evidence memory"]
+    end
+
+    VERIFY["Independent event verifier"]
+    REF["Lightweight timestamp refinement"]
+    TL["Optional TimeLens2 grounding"]
+    OUT["video + [start,end]<br/>confidence + evidence"]
+
+    V --> E --> IDX
+    Q["Investigator query"] --> QP --> SEARCH
+    IDX --> SEARCH --> FUSE --> GEM
+    GEM --> TOOLS --> MEM --> GEM
+    GEM --> VERIFY --> REF --> OUT
+    REF -. "quality trigger" .-> TL -.-> OUT
+```
+
+The expensive semantic model is neither the database nor the first-pass scanner. It reasons over a small, retrieved evidence neighborhood.
+
+## Traceable PostgreSQL + pgvector storage
+
+SQLite/FAISS remains useful for a dependency-light local smoke test. The production backend is `PostgresIndexStore` with `PostgresVectorIndex`:
+
+```mermaid
+flowchart LR
+    R["Raw source video"] --> X["FFmpeg / local model extraction"]
+    X --> E["Canonical pl_evidence\ncontent + timestamp + metadata + hash"]
+    E --> T["ACID evidence/embedding transaction"]
+    T --> V["pl_embeddings\nvector + copied provenance + evidence FK"]
+    Q["Query vector"] --> S["pgvector cosine ORDER BY"]
+    S --> V
+    V --> P["source_uri + timestamps + raw evidence"]
+    P --> A["Replay / Gemini verification / audit"]
+```
+
+`pl_embeddings` intentionally duplicates the fields required to replay a hit: `video_id`, `segment_id`, `start_ms`, `end_ms`, `modality`, `source_uri`, `evidence_text`, `evidence_metadata`, `evidence_source`, `model_version`, `confidence`, `evidence_hash`, `source_sha256`, and `embedding_hash`. It also retains a foreign key to `pl_evidence`. The write path obtains the duplicated fields with `INSERT ... SELECT` from `pl_evidence JOIN pl_assets`, so an embedding cannot be created for missing evidence or an unknown video.
+
+The ingestion pipeline calls `add_evidence_and_embeddings` for each visual batch. PostgreSQL commits the evidence and vectors together; a failed vector insert rolls back the evidence batch instead of leaving untraceable rows. A database trigger validates duplicated provenance on direct writes and synchronizes it when canonical evidence or asset metadata changes. Vector dimensions are stored per row, and a partial HNSW expression index is created for each observed dimension; the query filters by modality, model version, and dimension before ordering by cosine distance. This follows pgvector's expression-index pattern for variable-dimension columns.
+
+At retrieval time, pgvector returns the embedding row directly. The adapter reconstructs `Evidence` from that row and attaches `embedding_id`, `source_uri`, `model_version`, `evidence_hash`, `source_sha256`, and `embedding_hash` to the returned metadata. A caller can use `get_embedding_trace(embedding_id)` to retrieve the complete vector/provenance record for replay or audit.
+
+## 1. Offline multimodal ingestion
+
+```mermaid
+flowchart LR
+    V["Bodycam MP4"] --> PROBE["FFprobe<br/>duration · FPS · streams"]
+    PROBE --> SEG["16 s windows<br/>8 s stride"]
+    PROBE --> AUDIO["Decode 16 kHz mono once"]
+    PROBE --> FRAMES["Decode frame sequence once<br/>~1 FPS"]
+
+    AUDIO --> ASR["faster-whisper<br/>large-v3-turbo"]
+    AUDIO --> VAD["Silero VAD"]
+    AUDIO --> PROSODY["RMS + pitch"]
+    AUDIO --> EVENTS["YAMNet"]
+    FRAMES --> VIS["SigLIP2 embeddings"]
+    FRAMES --> OCR["PaddleOCR"]
+
+    ASR --> FTS["SQLite FTS5"]
     OCR --> FTS
-    ANN --> FTS
-    VIS --> VDB[(Local vector index<br/>visual / clip / audio)]
-    AUDIO --> FTS
-    META --> DB[(SQLite metadata<br/>segments and artifacts)]
-    WIN --> DB
-
-    Q[Natural-language query] --> PLAN[Query planner<br/>modalities + constraints]
-    PLAN --> TXT[Transcript/OCR retrieval]
-    PLAN --> VRET[Visual retrieval]
-    PLAN --> ARET[Audio/prosody retrieval]
-    PLAN --> CRET[Clip/event retrieval]
-    FTS --> TXT
-    FTS --> CRET
-    FTS --> ARET
-    VDB --> VRET
-    VDB --> CRET
-
-    TXT --> FUSE[Temporal join + reciprocal-rank fusion]
-    VRET --> FUSE
-    ARET --> FUSE
-    CRET --> FUSE
-    FUSE --> CAND[Candidate intervals]
-    CAND --> JUDGE[OpenRouter multimodal verifier<br/>only selected short clips]
-    JUDGE --> VALID[Validate evidence<br/>refine timestamps / clamp offsets]
-    VALID --> DEDUPE[Merge adjacent matches<br/>remove duplicate windows]
-    DEDUPE --> OUT[Timestamped JSON results<br/>with modality evidence]
+    VAD --> SQL["SQLite evidence"]
+    PROSODY --> SQL
+    EVENTS --> SQL
+    VIS --> FAISS["FAISS IP index"]
+    FTS --> META["Canonical timestamps + provenance"]
+    SQL --> META
+    FAISS --> META
 ```
 
-## How the design solves the problem
+### Why these components exist
 
-### Visual and temporal understanding
+| Requirement | Component | Resolution |
+|---|---|---|
+| Visual appearance | SigLIP2 | Open-vocabulary text-to-frame retrieval for clothing, vehicles, nighttime, and objects |
+| Spoken language | faster-whisper | Word/utterance timestamps for Miranda rights, commands, names, and quotations |
+| Visible writing | PaddleOCR | Literal plate/sign/badge text with frame timestamps and confidence |
+| Voice/prosody | Silero + RMS/pitch | Speech presence and raised-intensity cues without pretending loudness proves speaker identity |
+| Non-speech sound | YAMNet | Candidate cues for sirens, gunshots, barking, alarms, and related AudioSet events |
+| Text lookup | SQLite FTS5/BM25 | Fast local ASR/OCR/audio-label retrieval |
+| Visual lookup | FAISS | Fast cosine/IP search over normalized SigLIP2 vectors |
+| Provenance | SQLite | Model, confidence, media path, exact time span, and processing fingerprint |
 
-Frame-level visual vectors provide broad recall for objects, colors, people, vehicles, and clothing. They remain associated with their original frame timestamps instead of being averaged into one video vector.
+Processing windows organize work; they are not the evidence unit. ASR utterances, OCR detections, frames, and audio windows retain their own timestamps.
 
-Temporal windows provide event context. A short clip verifier examines ordered frames for actions such as handcuffing or pulling a vehicle over. This separates static appearance search from motion and event reasoning.
+### Long-video behavior
 
-### Speech, audio, and visible text
+For a duration \(D\), window size \(W\), and stride \(S\), the number of processing windows is approximately:
 
-- ASR converts spoken language into searchable text with word-level timestamps. It supports Miranda-rights searches, spoken commands, names, and addresses.
-- Audio analysis produces speech activity, loudness, pitch, and prosody features. This supports raised-voice searches even when the transcript does not contain the word “shouting.”
-- OCR extracts visible text and its location. It supports license plates, street signs, IDs, and dashboard text.
+\[
+N = \left\lceil\frac{D-W}{S}\right\rceil + 1
+\]
 
-Each modality is indexed independently so a model or provider can be replaced without changing the query API.
+For 90 minutes, `W=16 s`, and `S=8 s`, the implementation emits 674 windows. Frame decoding is a single sequential FFmpeg pass, audio is decoded once, and all writes are deterministic upserts. An ingestion fingerprint permits restart/skip behavior.
 
-### Timestamp localization
+There is no “replication worker” in this design. Horizontal ingestion workers may claim different videos, but SQLite/FAISS replication is a deployment concern, not a semantic pipeline stage.
 
-The system uses a two-stage temporal strategy:
+## 2. Query planning and coarse retrieval
 
-1. Retrieve overlapping coarse windows from precomputed indexes.
-2. Resample only candidate windows densely and ask the verifier for event-relative offsets.
+```mermaid
+flowchart TD
+    Q["Natural-language query"] --> PLAN["Structured Gemini plan"]
+    PLAN --> VQ["Visual phrases"]
+    PLAN --> TQ["Transcript phrases"]
+    PLAN --> OQ["OCR terms or discovery wildcard"]
+    PLAN --> AQ["Audio/prosody phrases"]
 
-Relative offsets are converted to source-video timestamps, clamped to the candidate interval, validated, and then merged with adjacent detections. This keeps results useful for 90-minute videos without submitting the full video to a hosted model.
+    VQ --> VR["SigLIP2 text vector → FAISS"]
+    TQ --> TR["FTS5 / BM25"]
+    OQ --> OR["FTS5 or top-confidence OCR"]
+    AQ --> AR["FTS5 audio-event evidence"]
 
-### Cross-modal reasoning
-
-The query planner converts natural language into modality weights and constraints. A compound query can be represented conceptually as:
-
-```text
-person wearing red shirt
-AND elevated vocal intensity
-WITHIN 15 seconds
+    VR --> JOIN["Temporal relation join"]
+    TR --> JOIN
+    OR --> JOIN
+    AR --> JOIN
+    JOIN --> RRF["Weighted reciprocal-rank fusion"]
+    RRF --> C["Top candidate intervals"]
 ```
 
-The retrieval branches first find evidence independently. Temporal fusion then joins nearby evidence before the OpenRouter verifier receives the selected clip, transcript, OCR, and acoustic features. The verifier must return structured evidence and timestamps rather than an unsupported free-form answer.
+The planner emits branch queries, required modalities, relation (`overlap`, `before`, `after`, `sequence`, or `any`), relation tolerance, and target (`event` or `onset`). A deterministic planner remains available for tests and offline debugging.
 
-## 90-minute video strategy
+For branch result rank \(r_m(e)\), fusion contributes:
 
-Indexing is performed once and cached by video hash, model version, and configuration. A 90-minute video produces approximately:
+\[
+score(c) = \sum_m \frac{w_m}{k + r_m(c)}
+\]
 
-- 5,400 one-FPS frame samples;
-- 674 overlapping 16-second coarse windows;
-- a continuous audio/prosody timeline;
-- one timestamped transcript.
+with `k=60` by default. Raw score scales from heterogeneous models are therefore not compared directly. Before fusion, evidence must satisfy the temporal relation. For a conjunctive query, candidates missing a required modality are discarded. This intentionally favors precision.
 
-Queries operate on SQLite and local vector records. Only the strongest candidate intervals are decoded again and optionally sent to OpenRouter. This makes query latency independent of repeatedly processing all 90 minutes of raw pixels.
-
-## Result contract
-
-Every result contains:
+Example plan:
 
 ```json
 {
-  "video_id": "video-abc",
-  "start_s": 1842.6,
-  "end_s": 1851.4,
-  "score": 0.87,
-  "evidence": [
-    {
-      "modality": "transcript",
-      "start_s": 1847.2,
-      "end_s": 1850.1,
-      "text": "..."
-    }
-  ],
-  "warnings": []
+  "visual_queries": ["person wearing a red jacket"],
+  "audio_queries": ["elevated vocal intensity shouting"],
+  "required_modalities": ["visual", "audio_event"],
+  "relation": "overlap",
+  "target": "onset"
 }
 ```
 
-The result is an evidence-backed interval, not a claim that the model understood the entire video. OCR ambiguity, acoustic heuristics, provider failures, and low-confidence model judgments are surfaced in `warnings` or confidence fields.
+At this stage the result means “worth inspecting,” not “confirmed.”
 
-## Main tradeoff
+## 3. Active perception
 
-The design spends inexpensive local computation on broad indexing and expensive multimodal reasoning only on a small candidate set. This gives better temporal and cross-modal correctness than frame-only retrieval while preserving model hotswappability and keeping 90-minute videos operationally manageable.
+```mermaid
+flowchart TD
+    C["Candidate interval + retrieved evidence"] --> G["Gemini controller"]
+    G --> D{"Enough direct evidence?"}
+    D -->|"appearance / OCR detail"| GF["get_frames"]
+    D -->|"speech / prosody"| GA["get_audio"]
+    D -->|"motion / attribution / sequence"| GC["get_clip"]
+    GF --> FF["Bounded FFmpeg executor"]
+    GA --> FF
+    GC --> FF
+    FF --> M["memory.json"] --> G
+    D -->|"supported / rejected / uncertain"| A["Answer proposal"]
+```
+
+The controller is independently implemented from OmniAgent's research environment but preserves its useful interface. Limits are enforced outside the model:
+
+- no request may leave the candidate interval;
+- at most 12 frames per frame action;
+- at most 30 seconds per audio action;
+- at most 20 seconds per clip action;
+- repeated actions are rejected;
+- default maximum is six turns;
+- a cross-modal supported answer is blocked until required visual/audio media has been directly inspected.
+
+Each action, observation path, compact assessment, retrieved item, and controller warning is atomically persisted to `INDEX/runs/RUN_ID/memory.json`. Raw media does not accumulate in the prompt; compact evidence memory does.
+
+## 4. Semantic verification
+
+The active controller proposes an answer. A separate Gemini call is the final semantic gate.
+
+Inputs:
+
+- original query and structured plan;
+- candidate interval;
+- retrieved ASR/OCR/visual/audio evidence;
+- active-observation summaries;
+- selected decisive frames/audio/clips.
+
+Output:
+
+```yaml
+status: supported | rejected | uncertain
+event_description: string
+start_ms: integer
+end_ms: integer
+confidence: 0..1
+evidence:
+  visual: []
+  audio: []
+  transcript: []
+  ocr: []
+missing_evidence: []
+```
+
+The verifier is instructed to reject mere co-occurrence, unsupported speaker attribution, and causal inference. Intervals are clamped to the candidate boundary. Retrieval score and verifier confidence remain separate fields.
+
+## 5. Timestamp refinement
+
+```mermaid
+flowchart LR
+    V["Verified coarse interval"] --> Z["Zoom to ±7 s context"]
+    Z --> CLIP["6 FPS short clip"]
+    Z --> WAV["16 kHz audio"]
+    WAV --> ONSET["200 ms relative-loudness onset cue"]
+    CLIP --> G["Gemini boundary check"]
+    ONSET --> G
+    G --> T["Refined [start,end]"]
+```
+
+The deterministic audio onset is only a boundary hint; it cannot establish shouting or speaker identity. Gemini uses the already-verified event semantics to choose the first and last supporting instants.
+
+## 6. Optional TimeLens2 boundary
+
+```mermaid
+flowchart LR
+    RET["Coarse retrieval"] --> GEM["Active perception + verification"]
+    GEM --> REF["Lightweight refinement"]
+    REF --> CHECK{"Broad interval or<br/>confidence below threshold?"}
+    CHECK -->|"No"| OUT["Final interval"]
+    CHECK -->|"Yes and enabled"| TL["External TimeLens2 wrapper"] --> OUT
+```
+
+TimeLens2 is deliberately not a candidate generator. It is a specialist invoked only when Gemini finds the correct event but boundaries remain poor. The adapter accepts one or more intervals and supports repeated-event output.
+
+The core package has no TimeLens2 import. A subprocess interface isolates its environment and restrictive license. Activation requires an explicit command and acknowledgement.
+
+## Final query lifecycle
+
+```mermaid
+flowchart TD
+    Q["Investigator query"] --> P["Gemini decomposition"]
+    P --> R["Parallel local retrieval"]
+    R --> J["Temporal join + RRF"]
+    J --> K["Top-K candidates"]
+    K --> A["Active perception loop"]
+    A --> S{"Complete event supported?"}
+    S -->|"No"| N["Next candidate"] --> A
+    S -->|"Yes"| V["Independent verifier"]
+    V --> F["Timestamp refinement"]
+    F --> T{"Specialist needed?"}
+    T -->|"No"| O["Ranked evidence result"]
+    T -->|"Yes"| TL["TimeLens2 optional"] --> O
+```
+
+## Hotswappable boundaries
+
+| Boundary | Protocol / file | Current implementation | Replacement examples |
+|---|---|---|---|
+| ASR | `ASRBackend` | faster-whisper | WhisperX, cloud ASR, agency transcript |
+| OCR | `OCRBackend` | PaddleOCR | plate-specific OCR, EasyOCR |
+| Visual encoder | `VisualBackend` / `TextEncoder` | SigLIP2 | video-native encoder, CLIP, hosted embedding |
+| Audio | `AudioBackend` | RMS/pitch + optional Silero/YAMNet | PANNs, CLAP, custom prosody classifier |
+| Text index | `IndexStore` | SQLite FTS5 | OpenSearch, Tantivy |
+| Vector index | `VectorIndex` | FAISS with exact fallback | Qdrant, Milvus, pgvector |
+| Query planner | `QueryPlanner` | Gemini or heuristic | another structured LLM/planner |
+| Active policy | `ActivePolicy` | Gemini 3.1 Pro | local multimodal policy |
+| Verifier | `EventVerifier` | Gemini 3.1 Pro | another frontier VLM or ensemble |
+| Temporal specialist | subprocess adapter | TimeLens2 optional | any interval-grounding service |
+
+The domain dataclasses and JSON schemas are provider-neutral. OpenRouter's OpenAI-compatible transport is isolated to `adapters/openrouter.py`; `adapters/gemini.py` remains a compatibility import for existing callers.
+
+## Repository mapping
+
+```mermaid
+flowchart LR
+    subgraph RESEARCH["Research sources"]
+        VR["Video-RAG"]
+        OA["OmniAgent"]
+        TL["TimeLens2"]
+    end
+    subgraph CODE["PatrolLens"]
+        ING["ingestion/ + index/"]
+        RET["retrieval/"]
+        AG["agent/ + media_tools/"]
+        VER["verification/"]
+        TEMP["temporal/"]
+    end
+    VR -->|"auxiliary evidence + retrieval"| ING
+    VR -->|"RAG organization"| RET
+    OA -->|"bounded actions + memory"| AG
+    TL -->|"interval abstraction"| TEMP
+    AG --> VER
+```
+
+No upstream source is vendored. Exact inspected commits and licensing notes are in [upstreams.lock.json](upstreams.lock.json) and [THIRD_PARTY.md](THIRD_PARTY.md).
+
+## Failure behavior
+
+- Missing local model dependency: fail with a named optional-extra message; do not silently omit a requested modality.
+- Gemini planner failure: fall back to deterministic planning.
+- Invalid/repeated/out-of-range agent action: reject it, record a controller note, and continue within the turn budget.
+- Candidate-specific media/API failure: record a warning and continue to the next candidate.
+- Verifier rejection/uncertainty: do not emit a result.
+- Refinement failure: retain the verified interval with a warning.
+- TimeLens2 failure: retain lightweight grounding with a warning.
+- No FAISS installation/index: use exact SQLite vector search, preserving correctness at lower scale.
+
+## Evaluation strategy
+
+Evaluate the stages separately so a strong verifier cannot hide retrieval misses and broad retrieval cannot hide boundary errors:
+
+1. Candidate recall@K and false candidates/query.
+2. Event verifier precision, recall, and calibration.
+3. Temporal IoU plus absolute start/end error.
+4. Cross-modal attribution accuracy on adversarial negatives.
+5. OCR exact/normalized edit distance for plates.
+6. ASR word error rate on bodycam acoustics.
+7. Cost, media seconds sent to Gemini, and active turns/query.
+
+The TimeLens2 activation decision should be data-driven: add it only when the verifier consistently finds the right event but lightweight refinement produces unnecessarily broad intervals, high boundary error, or low temporal IoU.

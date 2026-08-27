@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+from typing import Any, Protocol
+
+from ..config import RetrievalConfig
+from ..domain import CandidateInterval, Evidence, QueryPlan, RetrievalHit
+from ..index.faiss_store import AutoVectorIndex, PostgresVectorIndex, VectorIndex
+from ..index.postgres_store import PostgresIndexStore
+from ..index.sqlite_store import IndexStore
+from .fusion import fuse_hits
+from .planner import HeuristicQueryPlanner, QueryPlanner
+
+
+class TextEncoder(Protocol):
+    model_name: str
+
+    def encode_text(self, text: str) -> list[float]: ...
+
+
+class CoarseRetriever:
+    def __init__(
+        self,
+        store: IndexStore | PostgresIndexStore,
+        *,
+        planner: QueryPlanner | None = None,
+        visual_encoder: TextEncoder | None = None,
+        vector_index: VectorIndex | PostgresVectorIndex | None = None,
+        config: RetrievalConfig | None = None,
+    ) -> None:
+        self.store = store
+        self.planner = planner or HeuristicQueryPlanner()
+        self.visual_encoder = visual_encoder
+        self.vector_index = vector_index or AutoVectorIndex(store)
+        self.config = config or RetrievalConfig()
+
+    @staticmethod
+    def _hits(branch: str, pairs: list[tuple[Evidence, float]]) -> list[RetrievalHit]:
+        return [
+            RetrievalHit(branch=branch, rank=rank, score=score, evidence=evidence)
+            for rank, (evidence, score) in enumerate(pairs, start=1)
+        ]
+
+    def retrieve_plan(self, plan: QueryPlan) -> list[CandidateInterval]:
+        branches: dict[str, list[RetrievalHit]] = {}
+        limit = self.config.branch_k
+        for index, query in enumerate(plan.transcript_queries):
+            branch = f"transcript:{index}"
+            branches[branch] = self._hits(
+                branch,
+                self.store.search_text(query, modalities=["transcript"], limit=limit),
+            )
+        for index, query in enumerate(plan.ocr_queries):
+            branch = f"ocr:{index}"
+            pairs = self.store.top_evidence("ocr", limit=limit) if query == "*" else self.store.search_text(
+                query, modalities=["ocr"], limit=limit
+            )
+            branches[branch] = self._hits(branch, pairs)
+        for index, query in enumerate(plan.audio_queries):
+            branch = f"audio_event:{index}"
+            branches[branch] = self._hits(
+                branch,
+                self.store.search_text(query, modalities=["audio_event"], limit=limit),
+            )
+        if self.visual_encoder:
+            for index, query in enumerate(plan.visual_queries):
+                branch = f"visual:{index}"
+                pairs = self.vector_index.search(
+                    self.visual_encoder.encode_text(query),
+                    modality="visual",
+                    model=self.visual_encoder.model_name,
+                    limit=limit,
+                )
+                branches[branch] = self._hits(branch, pairs)
+
+        durations = {asset.id: asset.duration_ms for asset in self.store.all_assets()}
+        candidates = fuse_hits(
+            branches,
+            plan,
+            config=self.config,
+            video_durations=durations,
+        )
+        return candidates[: self.config.top_k]
+
+    def retrieve(self, query: str) -> tuple[QueryPlan, list[CandidateInterval]]:
+        plan = self.planner.plan(query)
+        return plan, self.retrieve_plan(plan)
+
+    def search(self, query: str, **_kwargs: Any) -> tuple[QueryPlan, list[CandidateInterval], str]:
+        plan, candidates = self.retrieve(query)
+        return plan, candidates, "coarse_only"
+
+    def search_json(self, query: str, **_kwargs: Any) -> dict[str, Any]:
+        plan, candidates = self.retrieve(query)
+        return {
+            "query": query,
+            "query_plan": plan.to_dict(),
+            "index_version": self.store.get_metadata("index_version", "unknown"),
+            "stage": "coarse_retrieval",
+            "results": [item.to_dict() for item in candidates],
+        }

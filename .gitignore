@@ -5,3 +5,12 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 .env
+*.mp4
+*.webm
+*.mov
+*.m4v
+*.avi
+*.mkv
+*.egg-info/
+build/
+dist/

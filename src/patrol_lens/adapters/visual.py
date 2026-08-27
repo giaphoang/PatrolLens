@@ -31,19 +31,29 @@ class SigLIP2Encoder:
         return self._processor, self._model
 
     @staticmethod
-    def _vector(output: Any) -> list[float]:
+    def _tensor(output: Any) -> Any:
         if hasattr(output, "pooler_output") and output.pooler_output is not None:
-            output = output.pooler_output
+            return output.pooler_output
         elif hasattr(output, "image_embeds") and output.image_embeds is not None:
-            output = output.image_embeds
+            return output.image_embeds
         elif hasattr(output, "text_embeds") and output.text_embeds is not None:
-            output = output.text_embeds
-        if hasattr(output, "detach"):
-            output = output.detach().float().cpu().tolist()
-        while output and isinstance(output[0], list):
-            output = output[0]
-        norm = sum(item * item for item in output) ** 0.5
-        return [item / norm for item in output] if norm else list(output)
+            return output.text_embeds
+        return output
+
+    @classmethod
+    def _vectors(cls, output: Any) -> list[list[float]]:
+        values = cls._tensor(output)
+        if hasattr(values, "detach"):
+            values = values.detach().float().cpu().tolist()
+        if values and not isinstance(values[0], list):
+            values = [values]
+        vectors: list[list[float]] = []
+        for vector in values:
+            while vector and isinstance(vector[0], list):
+                vector = vector[0]
+            norm = sum(float(item) * float(item) for item in vector) ** 0.5
+            vectors.append([float(item) / norm for item in vector] if norm else [float(item) for item in vector])
+        return vectors
 
     def encode_text(self, text: str) -> list[float]:
         processor, model = self._load()
@@ -54,7 +64,7 @@ class SigLIP2Encoder:
                 output = model.get_text_features(**inputs)
             else:
                 output = model(**inputs)
-        return self._vector(output)
+        return self._vectors(output)[0]
 
     def encode_image(self, image_path: str) -> list[float]:
         processor, model = self._load()
@@ -70,4 +80,23 @@ class SigLIP2Encoder:
                 output = model.get_image_features(**inputs)
             else:
                 output = model(**inputs)
-        return self._vector(output)
+        return self._vectors(output)[0]
+
+    def encode_images(self, image_paths: list[str]) -> list[list[float]]:
+        if not image_paths:
+            return []
+        processor, model = self._load()
+        try:
+            from PIL import Image
+        except ImportError as exc:
+            raise RuntimeError("Pillow is required for image embeddings") from exc
+        images = [Image.open(path).convert("RGB") for path in image_paths]
+        try:
+            inputs = processor(images=images, return_tensors="pt", padding=True)
+            inputs = {key: value.to(self.device) if hasattr(value, "to") else value for key, value in inputs.items()}
+            with self._torch.no_grad():
+                output = model.get_image_features(**inputs) if hasattr(model, "get_image_features") else model(**inputs)
+            return self._vectors(output)
+        finally:
+            for image in images:
+                image.close()

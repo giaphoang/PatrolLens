@@ -35,7 +35,13 @@ class PaddleOCRBackend:
         result = self._load().predict(image_path)
         observations: list[dict[str, Any]] = []
         for page in result or []:
-            data = page if isinstance(page, dict) else getattr(page, "json", lambda: {})()
+            data = page if isinstance(page, dict) else getattr(page, "json", {})
+            if callable(data):
+                data = data()
+            if isinstance(data, dict) and isinstance(data.get("res"), dict):
+                data = data["res"]
+            if not isinstance(data, dict):
+                continue
             texts = data.get("rec_texts", [])
             scores = data.get("rec_scores", [])
             boxes = data.get("rec_polys", [])

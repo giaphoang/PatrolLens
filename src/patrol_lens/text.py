@@ -5,7 +5,6 @@ import math
 import re
 from collections.abc import Iterable
 
-
 TOKEN_RE = re.compile(r"[\w']+", re.UNICODE)
 STOPWORDS = {
     "a", "an", "and", "at", "does", "each", "every", "find", "for", "from", "in", "instance", "instances",
