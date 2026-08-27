@@ -11,6 +11,8 @@ __pycache__/
 *.m4v
 *.avi
 *.mkv
+*.jpg
+*.wav
 *.egg-info/
 build/
 dist/

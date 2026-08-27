@@ -35,17 +35,17 @@ class FakeASR:
 
 
 class FakeOCR:
-    model_name = "fake-paddleocr"
+    model_name = "fake-ocr"
 
     def detect(self, _image_path):
         return [{"text": "ABC 123", "confidence": 0.95, "box": [[0, 0], [10, 10]]}]
 
 
 class FakeAudio:
-    model_name = "fake-yamnet-prosody"
+    model_name = "fake-audio"
 
     def analyze(self, _audio_path, _start_ms, _end_ms):
-        return AudioAnalysis(-15.0, 0.9, 180.0, ["elevated vocal intensity"], 0.88)
+        return AudioAnalysis(0.9, ["speech"], 0.88)
 
 
 class FakeMultimodalEmbedding:
@@ -70,7 +70,7 @@ class FakeMultimodalEmbedding:
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="FFmpeg unavailable")
-def test_synthetic_ingestion_to_multimodal_retrieval(tmp_path):
+def test_synthetic_core_ingestion_to_multimodal_retrieval(tmp_path):
     source = tmp_path / "source.mp4"
     subprocess.run(
         [
@@ -89,8 +89,6 @@ def test_synthetic_ingestion_to_multimodal_retrieval(tmp_path):
         backends=IngestionBackends(
             visual=visual,
             asr=FakeASR(),
-            ocr=FakeOCR(),
-            audio=FakeAudio(),
         ),
         config=IngestionConfig(
             window_ms=2_000,
@@ -108,14 +106,16 @@ def test_synthetic_ingestion_to_multimodal_retrieval(tmp_path):
         config=RetrievalConfig(top_k=5),
     )
 
-    _plan, candidates = retriever.retrieve("Find when the person in the red shirt started shouting")
+    _plan, candidates = retriever.retrieve(
+        "Find the person in the red shirt while saying right to remain silent"
+    )
 
     assert stats["visual"] == 1
     assert stats["transcript"] == 1
-    assert stats["ocr"] >= 2
-    assert stats["audio"] >= 2
+    assert stats["ocr"] == 0
+    assert stats["audio"] == 0
     assert candidates
-    assert set(candidates[0].covered_modalities) >= {"visual", "audio_event"}
+    assert set(candidates[0].covered_modalities) >= {"visual", "transcript"}
     store.close()
 
 

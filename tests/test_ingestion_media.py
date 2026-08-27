@@ -17,7 +17,7 @@ from PIL import Image
 from patrol_lens.config import IngestionConfig
 from patrol_lens.domain import Evidence, VideoAsset
 from patrol_lens.index import IndexStore
-from patrol_lens.ingestion import IngestionPipeline
+from patrol_lens.ingestion import IngestionBackends, IngestionPipeline
 
 
 def test_ninety_minute_video_uses_overlapping_coarse_windows():
@@ -42,7 +42,7 @@ def test_metadata_ingestion_is_restartable(tmp_path):
     store.close()
 
 
-def test_changed_ingestion_fingerprint_supersedes_stale_evidence(tmp_path):
+def test_completed_asset_is_preserved_across_backend_fingerprint_change(tmp_path):
     store = IndexStore(tmp_path / "index")
     asset = VideoAsset("v1", "/not/read/without/backends.mp4", "hash", 33_000, has_audio=False)
     first = IngestionPipeline(store, config=IngestionConfig())
@@ -50,10 +50,53 @@ def test_changed_ingestion_fingerprint_supersedes_stale_evidence(tmp_path):
     store.add_evidence(Evidence("stale", "v1", 0, 1000, "ocr", "OLD", 1.0, "old-model"))
 
     second = IngestionPipeline(store, config=IngestionConfig(window_ms=8_000, stride_ms=4_000))
-    second.ingest_asset(asset)
+    second_stats = second.ingest_asset(asset)
 
+    assert second_stats["skipped"] is True
+    assert second_stats["preserved_completed"] is True
+    assert store.get_evidence("stale") is not None
+    assert store.ingestion_status("v1", first_stats["fingerprint"])["status"] == "complete"
+
+    rebuilt = second.ingest_asset(asset, force=True)
+
+    assert rebuilt["skipped"] is False
     assert store.get_evidence("stale") is None
     assert store.ingestion_status("v1", first_stats["fingerprint"])["status"] == "superseded"
+    store.close()
+
+
+def test_incomplete_asset_reuses_existing_transcript(tmp_path):
+    class CountingASR:
+        model_name = "openai/whisper-large-v3-turbo"
+
+        def __init__(self):
+            self.calls = 0
+
+        def transcribe(self, _audio_path):
+            self.calls += 1
+            return []
+
+    store = IndexStore(tmp_path / "index")
+    asset = VideoAsset("v1", "/not/read.mp4", "hash", 10_000, has_audio=True)
+    store.upsert_asset(asset)
+    store.add_evidence(
+        Evidence("existing-transcript", "v1", 0, 2_000, "transcript", "keep me", 0.9, "faster-whisper")
+    )
+    audio_path = store.root / "media" / "audio" / "v1.wav"
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    audio_path.write_bytes(b"existing audio")
+    backend = CountingASR()
+
+    stats = IngestionPipeline(
+        store,
+        backends=IngestionBackends(asr=backend),
+        config=IngestionConfig(),
+    ).ingest_asset(asset)
+
+    assert stats["transcript"] == 1
+    assert stats["transcript_reused"] is True
+    assert backend.calls == 0
+    assert store.get_evidence("existing-transcript") is not None
     store.close()
 
 

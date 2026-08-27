@@ -24,6 +24,7 @@ class IngestionConfig:
     embedding_dimensions: int = 768
     embedding_batch_size: int = 6
     embed_images: bool = True
+    reuse_existing_transcripts: bool = True
 
 
 @dataclass(frozen=True)

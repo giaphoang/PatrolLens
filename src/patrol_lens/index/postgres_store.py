@@ -344,6 +344,17 @@ class PostgresIndexStore:
             rows = cursor.fetchall()
         yield from (self._evidence(row) for row in rows)
 
+    def evidence_count(self, video_id: str, *, modality: str | None = None) -> int:
+        sql = "SELECT COUNT(*) AS count FROM pl_evidence WHERE video_id = %s"
+        params: list[Any] = [video_id]
+        if modality:
+            sql += " AND modality = %s"
+            params.append(modality)
+        with self.db.cursor() as cursor:
+            cursor.execute(sql, params)
+            row = cursor.fetchone()
+        return int(row["count"])
+
     def top_evidence(self, modality: str, *, limit: int = 60) -> list[tuple[Evidence, float]]:
         with self.db.cursor() as cursor:
             cursor.execute(

@@ -17,15 +17,15 @@ flowchart LR
     subgraph OFF["1. Offline ingestion — once per video"]
         FF["FFmpeg / FFprobe"]
         CH["Scene/change detection<br/>keyframes + pHash dedup"]
-        GE["OpenRouter<br/>Gemini Embedding 2<br/>unique images + ASR/OCR text · 768-d"]
-        EXACT["Whisper + PaddleOCR<br/>exact searchable evidence"]
-        CUES["RMS/pitch · Silero · YAMNet<br/>local audio cues"]
+        GE["OpenRouter<br/>Gemini Embedding 2<br/>unique images + ASR text · 768-d"]
+        EXACT["OpenRouter Whisper<br/>exact searchable speech"]
+        CUES["Optional Silero VAD<br/>speech-presence cues"]
         IDX["Timestamped evidence<br/>SQLite FTS5 + pgvector/FAISS"]
     end
 
     subgraph RET["2. Cheap query-time retrieval"]
         PLAN["Gemini query planner"]
-        PAR["Parallel visual / ASR / OCR / audio search"]
+        PAR["Parallel visual / ASR / speech search"]
         FUSE["Temporal join + weighted RRF"]
     end
 
@@ -59,34 +59,38 @@ This resolves the original hard case—“the moment the person in the red jacke
 
 Retrieval scores create candidates only. They never become final evidence confidence.
 
-## Why ASR and OCR exist
+## Indexed evidence channels
 
 | Component | Evidence it creates | Queries it directly supports |
 |---|---|---|
 | ASR | Timestamped spoken words | Miranda rights, quoted speech, names, commands |
-| OCR | Timestamped visible characters | License plates, signs, badge or unit numbers |
-| Audio analysis | VAD, loudness, pitch, AudioSet events | Raised voice, sirens, gunshots, barking |
-| Gemini Embedding 2 | Shared 768-d image/text semantic space | Clothing, vehicles, scenes, transcript/OCR meaning |
+| Silero VAD (`full`) | Timestamped speech presence | Speech/non-speech candidate filtering |
+| Gemini Embedding 2 | Shared 768-d image/text semantic space | Clothing, vehicles, scenes, transcript meaning |
 | Gemini clips | Motion and cross-modal association | Handcuffing, traffic-stop sequence, who shouted, event causality |
 
-ASR cannot read a license plate, OCR cannot transcribe Miranda rights, and neither can establish a visual action. Each modality has a narrow job.
+ASR cannot establish a visual action, and speech presence does not prove who is
+speaking. Gemini verifies those cross-modal claims after coarse retrieval. New
+ingestion does not run OCR, loudness/pitch analysis, or general audio-event
+classification; historical rows from older indexes remain searchable.
 
 ## Quick start
 
 Prerequisites: Python 3.11+ and FFmpeg/FFprobe.
 
-Install the practical local stack plus the OpenAI SDK used to reach Gemini through OpenRouter:
+Install the production PostgreSQL/OpenRouter stack and optional Silero VAD:
 
 ```bash
-uv sync --extra dev --extra openrouter --extra vision --extra speech --extra ocr
+uv sync --extra dev --extra full
 source .venv/bin/activate
 patrol-lens doctor
 ```
 
-For Silero VAD and YAMNet as well:
+The local SigLIP/FAISS and faster-whisper paths remain optional fallbacks and
+are not included in `full` because production uses OpenRouter embeddings,
+PostgreSQL, and OpenRouter transcription:
 
 ```bash
-uv sync --extra dev --extra full
+uv sync --extra full --extra vision --extra speech
 ```
 
 Create the local environment file from the template:
@@ -100,7 +104,12 @@ The `patrol-lens` CLI automatically loads the nearest `.env` before parsing its 
 
 The default reasoning model is the OpenRouter slug `google/gemini-3.1-pro-preview`. Override it with `PATROLLENS_GEMINI_MODEL` or `--model`. The planner can use a separate model via `PATROLLENS_GEMINI_PLANNER_MODEL`. The optional `PATROLLENS_OPENROUTER_BASE_URL`, `PATROLLENS_OPENROUTER_HTTP_REFERER`, and `PATROLLENS_OPENROUTER_TITLE` settings are also supported.
 
-PatrolLens uses the OpenAI Python SDK with `https://openrouter.ai/api/v1`; it does not use the direct Google SDK. The provider-prefixed model slug is passed unchanged to OpenRouter. Ingestion uses `PATROLLENS_EMBEDDING_MODEL` through the synchronous embeddings endpoint only for deduplicated keyframe images and ASR/OCR text. Raw video and audio are sent to Gemini only after coarse retrieval, through bounded active-perception tools.
+PatrolLens uses `https://openrouter.ai/api/v1`; it does not use the direct
+provider SDKs. Ingestion sends five-minute extracted WAV chunks to the dedicated
+OpenRouter transcription endpoint using `PATROLLENS_ASR_MODEL`, then sends
+deduplicated keyframe images and ASR text through the embeddings endpoint.
+Raw video is sent only after coarse retrieval through bounded active-perception
+tools.
 
 Set the embedding model and vector size in the environment when resuming or rebuilding an index. Ingestion does not require a separate batch-model CLI option:
 
@@ -121,23 +130,27 @@ patrol-lens migrate-embeddings \
   --index .patrol-lens-artifacts
 ```
 
-This re-embeds canonical transcript/OCR text and visual image evidence into `pl_embeddings.embedding_768`, creates the `pl_embeddings_embedding_768_hnsw` index, and leaves any legacy `embedding` vectors intact for audit. Legacy raw-video/audio rows are deliberately not re-embedded; optimized ingestion recreates audio as local-only evidence and visual evidence as deduplicated keyframes. Resume normal ingestion with the same environment and without `--force`.
+This re-embeds canonical transcript text, historical OCR text, and visual image evidence into `pl_embeddings.embedding_768`, creates the `pl_embeddings_embedding_768_hnsw` index, and leaves any legacy `embedding` vectors intact for audit. Legacy raw-video/audio rows are deliberately not re-embedded; optimized ingestion recreates visual evidence as deduplicated keyframes and, in the full profile, audio as Silero speech-presence evidence. Resume normal ingestion with the same environment and without `--force`.
 
 ### 1. Ingest videos
 
-Core profile: Gemini Embedding 2 for deduplicated keyframe and ASR/OCR text indexing, faster-whisper `large-v3-turbo` for exact spoken text, PaddleOCR for exact visible text, and local RMS/pitch analysis:
+Core profile: Gemini Embedding 2 for deduplicated keyframe and ASR text
+indexing plus OpenRouter `openai/whisper-large-v3-turbo` segment transcripts:
 
 ```bash
 patrol-lens ingest videos_corpus --index .patrol-lens --profile core
 ```
 
-Full profile also enables Silero VAD and YAMNet:
+Full profile adds Silero VAD speech-presence evidence:
 
 ```bash
 patrol-lens ingest videos_corpus --index .patrol-lens --profile full
 ```
 
-`--no-embedding-images` disables hosted keyframe vectors while retaining ASR/OCR text embeddings and local audio evidence. `--no-embeddings` selects the local SigLIP2 visual path and disables all hosted ingestion vectors. There is no ingestion option for raw-video embeddings.
+`--no-embedding-images` disables hosted keyframe vectors while retaining ASR
+text embeddings. `--no-embeddings` selects the local SigLIP2 visual path and
+disables all hosted ingestion vectors. There is no ingestion option for
+raw-video embeddings.
 
 For a dependency-free metadata smoke test:
 
@@ -146,6 +159,23 @@ patrol-lens ingest videos_corpus --index .patrol-lens-smoke --profile metadata
 ```
 
 Ingestion is fingerprinted and restartable. Re-run the same command against the same `--index` to continue: completed videos are skipped, while failed or incomplete videos are retried. Each provider response is validated, saved immediately in a content-hash cache, and then attached to evidence in small committed batches. A retry reuses cached vectors instead of paying to embed completed items again. Do not use `--force` when continuing. Changing the embedding model, dimensions, or extraction settings creates a new fingerprint; use `--force` only for an intentional evidence rebuild (cached vectors are still reused when their full cache key matches).
+
+Changing the ASR backend does not reprocess completed videos. On an incomplete
+video, existing transcript evidence is reused and the remaining modalities
+continue. To deliberately regenerate transcripts, use `--force`; this also
+rebuilds the rest of that video's evidence.
+
+Before switching a corpus, benchmark one representative canary:
+
+```bash
+patrol-lens benchmark-asr videos_corpus/canary.mp4
+```
+
+The JSON report includes wall time, real-time factor, provider cost, cache
+usage, and a transcript preview. Add `--reference-transcript expected.txt` to
+measure word error rate against a known transcript. This affects offline
+ingestion only; query-time verification and temporal refinement remain
+unchanged.
 
 ## Traceable PostgreSQL + pgvector backend
 
@@ -167,9 +197,9 @@ Use the same `--backend postgres --database-url ...` flags for `retrieve`, `sear
 
 ```mermaid
 flowchart LR
-    RAW["Raw video"] --> LOCAL["Local scene/keyframe dedup\nASR · OCR · audio cues"]
+    RAW["Raw video"] --> LOCAL["Local scene/keyframe dedup\nASR · optional speech cues"]
     LOCAL --> E["pl_evidence\ncontent · timestamps · metadata\nevidence_hash"]
-    E --> GE["Gemini Embedding 2\nunique images + ASR/OCR text\n768-d only"]
+    E --> GE["Gemini Embedding 2\nunique images + ASR text\n768-d only"]
     GE --> CACHE["pl_embedding_cache\ncontent-addressed checkpoint"]
     E --> TX["One ACID transaction"]
     CACHE --> TX
@@ -234,9 +264,15 @@ Each accepted result contains:
 
 ## How a 90-minute video is handled
 
-At the defaults, one 90-minute video retains 674 overlapping 16-second temporal windows at an 8-second stride for joining and recall, and samples about 5,400 frames at 1 FPS. Those windows are never uploaded for embedding. Adjacent visually equivalent frames become one canonical keyframe whose evidence interval is extended; only unique keyframes are remotely embedded. The audio track is decoded once for local ASR/VAD/prosody/event analysis.
+At the defaults, one 90-minute video retains 674 overlapping 16-second temporal windows at an 8-second stride for joining and recall, and samples about 5,400 frames at 1 FPS. Those windows are never uploaded for embedding. Adjacent visually equivalent frames become one canonical keyframe whose evidence interval is extended; only unique keyframes are remotely embedded. The audio track is decoded once and split into checkpointed five-minute chunks for OpenRouter transcription; the full profile also reuses it locally for Silero VAD.
 
-At query time, exact FTS5/Postgres text search is retained for literal ASR/OCR strings and local audio labels, while Gemini Embedding 2 query vectors search semantic transcript, OCR, and visual evidence. FAISS or pgvector reduces the full corpus to roughly 5–20 candidate intervals. Gemini receives only bounded observations—at most 12 frames, 30 seconds of audio, or 20 seconds of video per action—with a five-turn default budget. Memory grows as compact JSON summaries, not raw 90-minute media.
+At query time, exact FTS5/Postgres text search is retained for literal ASR
+strings and any historical evidence rows, while Gemini Embedding 2 query
+vectors search semantic transcript and visual evidence. FAISS or pgvector
+reduces the full corpus to roughly 5–20 candidate intervals. Gemini receives
+only bounded observations—at most 12 frames, 30 seconds of audio, or 20 seconds
+of video per action—with a five-turn default budget. Memory grows as compact
+JSON summaries, not raw 90-minute media.
 
 See [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md) for the formalization and detailed lifecycle.
 
@@ -292,4 +328,10 @@ Tests cover normalized storage, 768-d guards, keyframe deduplication, durable ca
 
 ## Privacy boundary
 
-Raw corpus video, audio, extracted ASR/OCR, indexes, and agent memory remain local. Offline indexing sends only deduplicated keyframe images and transcript/OCR text to OpenRouter. Query-time search sends the investigator query, and active search sends only selected short observations after coarse retrieval. Deployments still need agency-specific access control, encryption, retention, redaction, audit logging, and legal review; those are intentionally outside this prototype.
+Raw corpus video, extracted transcripts, indexes, and agent memory remain local.
+Offline indexing sends deduplicated keyframe images, transcript text, and
+five-minute audio chunks to OpenRouter. Query-time search sends the investigator
+query, and active search sends only selected short observations after coarse
+retrieval. Deployments still need agency-specific access control, encryption,
+retention, redaction, audit logging, provider data-handling review, and legal
+review; those are intentionally outside this prototype.

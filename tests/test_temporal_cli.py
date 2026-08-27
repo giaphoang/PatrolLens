@@ -7,7 +7,14 @@ from types import SimpleNamespace
 import pytest
 
 import patrol_lens.temporal.timelens2_adapter as adapter_module
-from patrol_lens.cli import _embedding, _load_project_env, build_parser
+from patrol_lens.adapters.asr import FasterWhisperASR, OpenRouterASR
+from patrol_lens.cli import (
+    _asr_backend,
+    _embedding,
+    _ingestion_backends,
+    _load_project_env,
+    build_parser,
+)
 from patrol_lens.domain import VerificationResult
 from patrol_lens.temporal import TimeLens2Adapter
 from patrol_lens.temporal.timelens2_adapter import should_use_timelens2
@@ -37,6 +44,42 @@ def test_ingestion_embedding_uses_base_environment_model(monkeypatch):
     assert embedding.batch_model == "google/gemini-embedding-2"
     assert embedding.query_model == "google/gemini-embedding-2"
     assert not hasattr(args, "embedding_batch_model")
+
+
+def test_offline_ingestion_defaults_to_openrouter_asr(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    args = build_parser().parse_args(["ingest", "videos"])
+
+    assert args.transcriber == "auto"
+    backend = _asr_backend(args)
+    assert isinstance(backend, OpenRouterASR)
+    assert backend.model_name == "openai/whisper-large-v3-turbo"
+
+
+def test_ingestion_profiles_exclude_removed_ocr_rms_and_yamnet_stacks():
+    parser = build_parser()
+    common = ["ingest", "videos", "--no-embeddings", "--no-asr", "--no-visual"]
+
+    core_args = parser.parse_args([*common, "--profile", "core"])
+    core = _ingestion_backends(core_args)
+    full = _ingestion_backends(parser.parse_args([*common, "--profile", "full"]))
+
+    assert core.ocr is None
+    assert core.audio is None
+    assert full.ocr is None
+    assert full.audio is not None
+    assert full.audio.model_name == "silero-vad"
+    assert not hasattr(core_args, "ocr_language")
+    assert not hasattr(core_args, "yamnet")
+    assert not hasattr(core_args, "raised_voice_db")
+
+
+def test_faster_whisper_remains_an_explicit_ingestion_fallback():
+    args = build_parser().parse_args(
+        ["ingest", "videos", "--transcriber", "faster_whisper"]
+    )
+
+    assert isinstance(_asr_backend(args), FasterWhisperASR)
 
 
 def test_cli_dotenv_overrides_stale_shell_configuration(monkeypatch, tmp_path):

@@ -17,7 +17,6 @@ from ..adapters.media import (
     probe_video,
     sha256_file,
 )
-from ..adapters.audio import AudioAnalysis
 from ..adapters.ocr import OCRBackend
 from ..config import IngestionConfig
 from ..domain import EmbeddingRecord, Evidence, Segment, VideoAsset
@@ -142,7 +141,15 @@ class IngestionPipeline:
 
         self.store.upsert_asset(asset)
         completed = self.store.completed_ingestion_fingerprints(asset.id)
-        if force or any(item != fingerprint for item in completed):
+        if completed and not force:
+            preserved = self.store.ingestion_status(asset.id, completed[0])
+            if preserved:
+                return {
+                    **preserved["stats"],
+                    "skipped": True,
+                    "preserved_completed": True,
+                }
+        if force:
             self.store.clear_asset_evidence(asset.id)
             self.store.supersede_ingestions(asset.id, fingerprint)
         segments = list(
@@ -158,6 +165,7 @@ class IngestionPipeline:
             "duration_s": round(asset.duration_ms / 1000, 3),
             "segments": len(segments),
             "transcript": 0,
+            "transcript_reused": False,
             "visual": 0,
             "ocr": 0,
             "audio": 0,
@@ -176,8 +184,20 @@ class IngestionPipeline:
         try:
             audio_path = self._audio_path(asset) if (self.backends.asr or self.backends.audio) else None
             if self.backends.asr and audio_path:
-                stats["transcript"], transcript_vectors = self._ingest_transcript(asset, segments, audio_path)
-                stats["embedding_vectors"] += transcript_vectors
+                existing_transcripts = self.store.evidence_count(
+                    asset.id,
+                    modality="transcript",
+                )
+                if self.config.reuse_existing_transcripts and existing_transcripts and not force:
+                    stats["transcript"] = existing_transcripts
+                    stats["transcript_reused"] = True
+                else:
+                    stats["transcript"], transcript_vectors = self._ingest_transcript(
+                        asset,
+                        segments,
+                        audio_path,
+                    )
+                    stats["embedding_vectors"] += transcript_vectors
             if self.backends.visual or self.backends.ocr:
                 visual, ocr, vectors, ocr_vectors = self._ingest_frames(asset, segments)
                 stats.update(visual=visual, ocr=ocr, visual_vectors=vectors)
@@ -749,6 +769,7 @@ class IngestionPipeline:
         segments: list[Segment],
         audio_path: Path,
     ) -> int:
+        assert self.backends.audio is not None
         intervals: list[tuple[int, int]] = []
         start_ms = 0
         while start_ms < asset.duration_ms:
@@ -757,17 +778,14 @@ class IngestionPipeline:
             if end_ms >= asset.duration_ms:
                 break
             start_ms += self.config.audio_stride_ms
-        if self.backends.audio:
-            analyze_many = getattr(self.backends.audio, "analyze_many", None)
-            if callable(analyze_many):
-                analyses = analyze_many(str(audio_path), intervals)
-            else:
-                analyses = [
-                    self.backends.audio.analyze(str(audio_path), start, end)
-                    for start, end in intervals
-                ]
+        analyze_many = getattr(self.backends.audio, "analyze_many", None)
+        if callable(analyze_many):
+            analyses = analyze_many(str(audio_path), intervals)
         else:
-            analyses = [AudioAnalysis(-80.0, 0.0, None) for _interval in intervals]
+            analyses = [
+                self.backends.audio.analyze(str(audio_path), start, end)
+                for start, end in intervals
+            ]
 
         batch_size = 500
         for offset in range(0, len(intervals), batch_size):
@@ -777,11 +795,9 @@ class IngestionPipeline:
             for ordinal, ((start_ms, end_ms), result) in enumerate(
                 zip(batch_intervals, batch_analyses), start=offset
             ):
-                source = self.backends.audio.model_name if self.backends.audio else "audio-window"
+                source = self.backends.audio.model_name
                 metadata: dict[str, Any] = {
-                    "rms_db": result.rms_db,
                     "speech_activity": result.speech_activity,
-                    "pitch_hz": result.pitch_hz,
                     "event_scores": result.event_scores,
                     "source_reference": str(audio_path),
                     "source_hash": asset.sha256,

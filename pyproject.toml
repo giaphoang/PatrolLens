@@ -24,8 +24,7 @@ vision = [
 speech = [
   "faster-whisper>=1.0",
 ]
-ocr = ["paddleocr>=3", "paddlepaddle>=3"]
-audio = ["silero-vad>=5", "tensorflow>=2.16", "tensorflow-hub>=0.16"]
+audio = ["silero-vad>=5"]
 full = [
   "openai>=1.0",
   "psycopg[binary]>=3.2",
@@ -33,14 +32,7 @@ full = [
   "numpy>=1.26",
   "pillow>=10",
   "torch>=2.2",
-  "transformers>=4.45",
-  "faiss-cpu>=1.8",
-  "faster-whisper>=1.0",
-  "paddleocr>=3",
-  "paddlepaddle>=3",
   "silero-vad>=5",
-  "tensorflow>=2.16",
-  "tensorflow-hub>=0.16",
 ]
 dev = ["pytest>=8"]
 

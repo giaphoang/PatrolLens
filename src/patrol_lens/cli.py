@@ -7,18 +7,17 @@ import os
 import shlex
 import shutil
 import sys
+import tempfile
 from dataclasses import replace
 from pathlib import Path
 
-from .adapters.asr import FasterWhisperASR
-from .adapters.audio import (
-    CompositeAudioAnalyzer,
-    SileroVADAnalyzer,
-    WaveAudioAnalyzer,
-    YAMNetAnalyzer,
+from .adapters.asr import (
+    DEFAULT_OPENROUTER_ASR_MODEL,
+    FasterWhisperASR,
+    OpenRouterASR,
 )
-from .adapters.media import iter_video_files
-from .adapters.ocr import PaddleOCRBackend
+from .adapters.audio import SileroVADAnalyzer
+from .adapters.media import extract_audio, iter_video_files, probe_video
 from .adapters.openrouter import (
     EmbeddingDimensionError,
     OpenRouterEmbeddingClient,
@@ -26,6 +25,7 @@ from .adapters.openrouter import (
 )
 from .adapters.visual import SigLIP2Encoder
 from .agent import ActivePerceptionAgent, GeminiActivePolicy
+from .asr_benchmark import benchmark_backend, transcript_text, word_error_rate
 from .config import (
     DEFAULT_GEMINI_EMBEDDING_MODEL,
     DEFAULT_GEMINI_MODEL,
@@ -48,6 +48,31 @@ def _print(payload: object) -> None:
 
 Store = IndexStore | PostgresIndexStore
 VectorIndex = AutoVectorIndex | PostgresVectorIndex
+
+
+def _resolved_transcriber(value: str) -> str:
+    return "openrouter" if value == "auto" else value
+
+
+def _asr_backend(args: argparse.Namespace, *, selection: str | None = None):
+    selected = _resolved_transcriber(selection or args.transcriber)
+    if selected == "faster_whisper":
+        return FasterWhisperASR(
+            args.faster_whisper_model,
+            device=args.device,
+            compute_type=args.compute_type,
+            word_timestamps=False,
+        )
+    return OpenRouterASR(
+        model=args.asr_model,
+        base_url=args.openrouter_base_url,
+        http_referer=args.openrouter_http_referer,
+        title=args.openrouter_title,
+        language=args.asr_language,
+        chunk_seconds=args.asr_chunk_seconds,
+        timeout_s=args.asr_timeout_seconds,
+        max_retries=args.asr_max_retries,
+    )
 
 
 def _load_project_env() -> None:
@@ -117,6 +142,7 @@ def _embedding_canary(embedding: OpenRouterEmbeddingClient) -> None:
 def _ingestion_backends(args: argparse.Namespace) -> IngestionBackends:
     if args.profile == "metadata":
         return IngestionBackends()
+    asr = None if args.no_asr else _asr_backend(args)
     embedding = None if args.no_embeddings else _embedding(args)
     if embedding is not None:
         _embedding_canary(embedding)
@@ -125,23 +151,12 @@ def _ingestion_backends(args: argparse.Namespace) -> IngestionBackends:
         if args.no_visual or embedding is not None
         else SigLIP2Encoder(args.visual_model, device=args.device)
     )
-    asr = None if args.no_asr else FasterWhisperASR(
-        args.asr_model,
-        device=args.device,
-        compute_type=args.compute_type,
-    )
-    ocr = None if args.no_ocr else PaddleOCRBackend(language=args.ocr_language)
     audio = None
     if not args.no_audio:
-        analyzers = [WaveAudioAnalyzer(raised_db=args.raised_voice_db)]
         use_silero = args.silero_vad if args.silero_vad is not None else args.profile == "full"
-        use_yamnet = args.yamnet if args.yamnet is not None else args.profile == "full"
         if use_silero:
-            analyzers.append(SileroVADAnalyzer())
-        if use_yamnet:
-            analyzers.append(YAMNetAnalyzer())
-        audio = CompositeAudioAnalyzer(analyzers)
-    return IngestionBackends(visual=visual, embedding=embedding, asr=asr, ocr=ocr, audio=audio)
+            audio = SileroVADAnalyzer()
+    return IngestionBackends(visual=visual, embedding=embedding, asr=asr, audio=audio)
 
 
 def cmd_ingest(args: argparse.Namespace) -> None:
@@ -151,6 +166,10 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         raise ValueError("--batch-size must be positive")
     if args.embedding_batch_size <= 0:
         raise ValueError("--embedding-batch-size must be positive")
+    if args.asr_chunk_seconds <= 0 or args.asr_chunk_seconds > 600:
+        raise ValueError("--asr-chunk-seconds must be between 1 and 600")
+    if args.asr_timeout_seconds <= 0 or args.asr_max_retries < 0:
+        raise ValueError("ASR timeout must be positive and retries cannot be negative")
     if args.embedding_dimensions <= 0 or args.embedding_dimensions > 3072:
         raise ValueError("--embedding-dimensions must be between 1 and 3072")
     if args.backend == "postgres" and args.embedding_dimensions != 768:
@@ -204,6 +223,32 @@ def cmd_migrate_embeddings(args: argparse.Namespace) -> None:
                 **stats,
             }
         )
+
+
+def cmd_benchmark_asr(args: argparse.Namespace) -> None:
+    source = Path(args.input).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(source)
+    backend = _asr_backend(args, selection="openrouter")
+    asset = probe_video(source)
+    with tempfile.TemporaryDirectory(prefix="patrol-lens-asr-canary-") as temp_dir:
+        audio_path = extract_audio(source, Path(temp_dir) / "audio.wav")
+        spans, stats = benchmark_backend(
+            backend,
+            str(audio_path),
+            duration_seconds=asset.duration_ms / 1000,
+        )
+    result: dict[str, object] = {
+        "input": str(source),
+        "transcription": stats,
+    }
+    if args.reference_transcript:
+        reference = Path(args.reference_transcript).expanduser().read_text()
+        result["reference_word_error_rate"] = round(
+            word_error_rate(reference, transcript_text(spans)),
+            4,
+        )
+    _print(result)
 
 
 def _build_retriever(
@@ -300,10 +345,8 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
         "pgvector": "pgvector",
         "faiss": "faiss",
         "faster-whisper": "faster_whisper",
-        "PaddleOCR": "paddleocr",
         "SigLIP2/transformers": "transformers",
         "Silero VAD": "silero_vad",
-        "YAMNet/TensorFlow Hub": "tensorflow_hub",
     }
     def installed(module: str) -> bool:
         try:
@@ -321,9 +364,57 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
                 "PATROLLENS_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
             ),
             "gemini_model": os.getenv("PATROLLENS_GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
+            "default_ingestion_transcriber": _resolved_transcriber(
+                os.getenv("PATROLLENS_TRANSCRIBER", "auto")
+            ),
+            "asr_model": os.getenv(
+                "PATROLLENS_ASR_MODEL",
+                DEFAULT_OPENROUTER_ASR_MODEL,
+            ),
             "python_modules": {name: installed(module) for name, module in modules.items()},
         }
     )
+
+
+def _add_transcriber_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--transcriber",
+        "--asr-backend",
+        dest="transcriber",
+        choices=["auto", "openrouter", "faster_whisper"],
+        default=os.getenv("PATROLLENS_TRANSCRIBER", "auto"),
+        help="Offline ASR backend; auto selects OpenRouter transcription",
+    )
+    parser.add_argument(
+        "--asr-model",
+        default=os.getenv("PATROLLENS_ASR_MODEL", DEFAULT_OPENROUTER_ASR_MODEL),
+    )
+    parser.add_argument(
+        "--asr-language",
+        default=os.getenv("PATROLLENS_ASR_LANGUAGE", "auto"),
+    )
+    parser.add_argument(
+        "--asr-chunk-seconds",
+        type=int,
+        default=int(os.getenv("PATROLLENS_ASR_CHUNK_SECONDS", "300")),
+        help="Local checkpoint chunk size before remote transcription",
+    )
+    parser.add_argument(
+        "--asr-timeout-seconds",
+        type=float,
+        default=float(os.getenv("PATROLLENS_ASR_TIMEOUT_SECONDS", "90")),
+    )
+    parser.add_argument(
+        "--asr-max-retries",
+        type=int,
+        default=int(os.getenv("PATROLLENS_ASR_MAX_RETRIES", "3")),
+    )
+    parser.add_argument(
+        "--faster-whisper-model",
+        default=os.getenv("PATROLLENS_FASTER_WHISPER_MODEL", "large-v3-turbo"),
+    )
+    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--compute-type", default="default")
 
 
 def _add_ingest_arguments(parser: argparse.ArgumentParser) -> None:
@@ -340,17 +431,11 @@ def _add_ingest_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-embeddings", action="store_true")
     parser.add_argument("--no-embedding-images", action="store_true")
     parser.add_argument("--visual-model", default="google/siglip2-base-patch16-224")
-    parser.add_argument("--asr-model", default="large-v3-turbo")
-    parser.add_argument("--ocr-language", default="en")
-    parser.add_argument("--device", default="cpu")
-    parser.add_argument("--compute-type", default="default")
+    _add_transcriber_arguments(parser)
     parser.add_argument("--no-visual", action="store_true")
     parser.add_argument("--no-asr", action="store_true")
-    parser.add_argument("--no-ocr", action="store_true")
     parser.add_argument("--no-audio", action="store_true")
     parser.add_argument("--silero-vad", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--yamnet", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--raised-voice-db", type=float, default=-24.0)
     parser.add_argument("--window-s", type=float, default=16.0)
     parser.add_argument("--stride-s", type=float, default=8.0)
     parser.add_argument("--frame-fps", type=float, default=1.0)
@@ -452,6 +537,19 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("queries")
     _add_retrieval_arguments(evaluate)
     evaluate.set_defaults(func=cmd_evaluate)
+
+    asr_canary = commands.add_parser(
+        "benchmark-asr",
+        help="Benchmark the configured OpenRouter transcription model",
+    )
+    asr_canary.add_argument("input", help="One canary video")
+    _add_openrouter_transport_arguments(asr_canary)
+    _add_transcriber_arguments(asr_canary)
+    asr_canary.add_argument(
+        "--reference-transcript",
+        help="Optional ground-truth transcript text file for WER comparison",
+    )
+    asr_canary.set_defaults(func=cmd_benchmark_asr)
 
     migrate = commands.add_parser(
         "migrate-embeddings",

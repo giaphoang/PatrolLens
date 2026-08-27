@@ -27,9 +27,9 @@ flowchart LR
     V["38 bodycam videos<br/>≤ 90 min each"]
 
     subgraph OFF["1. Offline multimodal ingestion"]
-        E["Whisper / PaddleOCR / local audio cues"]
+        E["OpenRouter Whisper / optional Silero VAD"]
         SC["Local scene/change detection\nkeyframes + pHash dedup"]
-        GE["OpenRouter Gemini Embedding 2\nunique images + ASR/OCR text · 768-d"]
+        GE["OpenRouter Gemini Embedding 2\nunique images + ASR text · 768-d"]
         IDX["Timestamped evidence index"]
     end
 
@@ -69,7 +69,7 @@ SQLite/FAISS remains useful for a dependency-light local smoke test. The product
 flowchart LR
     R["Raw source video"] --> X["FFmpeg / local model extraction"]
     X --> E["Canonical pl_evidence\ncontent + timestamp + metadata + hash"]
-    E --> G["Gemini Embedding 2\nunique images + ASR/OCR text\n768-d only"]
+    E --> G["Gemini Embedding 2\nunique images + ASR text\n768-d only"]
     G --> C["pl_embedding_cache\ndurable content checkpoint"]
     E --> T["ACID evidence/embedding transaction"]
     C --> T
@@ -98,23 +98,15 @@ flowchart LR
     FRAMES --> CHANGE["Perceptual scene/change detection"]
     CHANGE --> KEYFRAMES["Canonical keyframes"]
     KEYFRAMES --> DEDUP["pHash visual dedup<br/>extend equivalent intervals"]
-    AUDIO --> ASR["faster-whisper<br/>large-v3-turbo"]
-    AUDIO --> VAD["Silero VAD"]
-    AUDIO --> PROSODY["RMS + pitch"]
-    AUDIO --> EVENTS["YAMNet"]
+    AUDIO --> ASR["OpenRouter STT<br/>Whisper Large V3 Turbo"]
+    AUDIO --> VAD["Silero VAD<br/>full profile only"]
     DEDUP --> IMAGE_EMB["Gemini Embedding 2<br/>unique image embeddings · 768-d"]
-    FRAMES --> OCR["PaddleOCR"]
 
     ASR --> FTS["Postgres FTS / SQLite FTS5"]
     ASR --> TEXT_EMB["Gemini Embedding 2<br/>transcript embeddings"]
-    OCR --> FTS
-    OCR --> OCR_EMB["Gemini Embedding 2<br/>OCR embeddings"]
-    VAD --> SQL["Local audio evidence rows"]
-    PROSODY --> SQL
-    EVENTS --> SQL
+    VAD --> SQL["Speech-presence evidence rows"]
     IMAGE_EMB --> CACHE["Content-hash embedding cache"]
     TEXT_EMB --> CACHE
-    OCR_EMB --> CACHE
     CACHE --> VEC["pgvector / FAISS<br/>768-d semantic vectors"]
     FTS --> META["Canonical timestamps + provenance"]
     SQL --> META
@@ -126,15 +118,13 @@ flowchart LR
 | Requirement | Component | Resolution |
 |---|---|---|
 | Visual appearance | Gemini Embedding 2 | Shared semantic search over locally deduplicated keyframe images |
-| Spoken language | faster-whisper | Word/utterance timestamps for Miranda rights, commands, names, and quotations |
-| Visible writing | PaddleOCR | Literal plate/sign/badge text with frame timestamps and confidence |
-| Voice/prosody | Silero + RMS/pitch | Speech presence and raised-intensity cues without pretending loudness proves speaker identity |
-| Non-speech sound | YAMNet | Candidate cues for sirens, gunshots, barking, alarms, and related AudioSet events |
-| Exact text lookup | Postgres FTS / SQLite FTS5 | Fast ASR/OCR/audio-label retrieval, preserving literal strings |
-| Semantic lookup | pgvector / FAISS | Cosine/IP search over 768-d image, transcript, and OCR vectors |
+| Spoken language | OpenRouter Whisper Large V3 Turbo | Checkpointed segment timestamps for Miranda rights, commands, names, and quotations |
+| Speech presence (full profile) | Silero VAD | Optional timestamped speech/non-speech evidence |
+| Exact text lookup | Postgres FTS / SQLite FTS5 | Fast ASR transcript retrieval, preserving literal strings |
+| Semantic lookup | pgvector / FAISS | Cosine/IP search over 768-d image and transcript vectors |
 | Provenance | PostgreSQL | Model, confidence, source reference/hash, exact time span, and processing fingerprint |
 
-Processing windows organize temporal joining; they are not remote embedding units. ASR utterances, OCR detections, canonical visual intervals, and local audio windows retain their own timestamps. Raw video/audio reaches Gemini only through bounded tools after coarse retrieval.
+Processing windows organize temporal joining; they are not remote embedding units. ASR utterances, canonical visual intervals, and optional Silero speech-presence windows retain their own timestamps. Five-minute WAV chunks reach OpenRouter only for transcription; raw video reaches Gemini only through bounded tools after coarse retrieval. Current ingestion deliberately omits OCR, RMS/pitch analysis, and general audio-event classification.
 
 ### Long-video behavior
 
@@ -307,11 +297,10 @@ flowchart TD
 
 | Boundary | Protocol / file | Current implementation | Replacement examples |
 |---|---|---|---|
-| ASR | `ASRBackend` | faster-whisper | WhisperX, cloud ASR, agency transcript |
-| OCR | `OCRBackend` | PaddleOCR | plate-specific OCR, EasyOCR |
+| ASR | `ASRBackend` | OpenRouter Whisper Large V3 Turbo | faster-whisper, agency transcript |
 | Semantic embedding | `EmbeddingBackend` / `TextEncoder` | OpenRouter Gemini Embedding 2 (synchronous ingestion endpoint) | direct Gemini API, another multimodal embedding provider |
 | Local visual fallback | `VisualBackend` / `TextEncoder` | SigLIP2 | video-native encoder, CLIP |
-| Audio | `AudioBackend` | RMS/pitch + optional Silero/YAMNet | PANNs, CLAP, custom prosody classifier |
+| Audio | `AudioBackend` | Optional Silero VAD | PANNs, CLAP, custom audio classifier |
 | Text index | `IndexStore` | SQLite FTS5 | OpenSearch, Tantivy |
 | Vector index | `VectorIndex` | FAISS with exact fallback | Qdrant, Milvus, pgvector |
 | Query planner | `QueryPlanner` | Gemini or heuristic | another structured LLM/planner |
@@ -365,8 +354,7 @@ Evaluate the stages separately so a strong verifier cannot hide retrieval misses
 2. Event verifier precision, recall, and calibration.
 3. Temporal IoU plus absolute start/end error.
 4. Cross-modal attribution accuracy on adversarial negatives.
-5. OCR exact/normalized edit distance for plates.
-6. ASR word error rate on bodycam acoustics.
-7. Cost, media seconds sent to Gemini, and active turns/query.
+5. ASR word error rate on bodycam acoustics.
+6. Cost, media seconds sent to Gemini, and active turns/query.
 
 The TimeLens2 activation decision should be data-driven: add it only when the verifier consistently finds the right event but lightweight refinement produces unnecessarily broad intervals, high boundary error, or low temporal IoU.
