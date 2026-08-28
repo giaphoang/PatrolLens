@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -24,6 +25,7 @@ from ..domain import EmbeddingRecord, Evidence, Segment, VideoAsset
 from ..index.faiss_store import AutoVectorIndex, PostgresVectorIndex
 from ..index.postgres_store import PostgresIndexStore
 from ..index.sqlite_store import IndexStore
+from ..runtime_metrics import peak_rss_mb
 
 
 class VisualBackend(Protocol):
@@ -148,11 +150,18 @@ class IngestionPipeline:
     def ingest_path(self, path: str | Path, *, force: bool = False) -> dict[str, Any]:
         return self.ingest_asset(probe_video(path), force=force)
 
+    @staticmethod
+    def _add_runtime_metrics(stats: dict[str, Any], started: float) -> dict[str, Any]:
+        stats["latency_seconds"] = round(time.perf_counter() - started, 3)
+        stats["peak_rss_mb"] = peak_rss_mb()
+        return stats
+
     def ingest_asset(self, asset: VideoAsset, *, force: bool = False) -> dict[str, Any]:
+        started = time.perf_counter()
         fingerprint = self._fingerprint()
         previous = self.store.ingestion_status(asset.id, fingerprint)
         if previous and previous["status"] == "complete" and not force:
-            return {**previous["stats"], "skipped": True}
+            return self._add_runtime_metrics({**previous["stats"], "skipped": True}, started)
 
         self.store.upsert_asset(asset)
         completed = self.store.completed_ingestion_fingerprints(asset.id)
@@ -180,11 +189,14 @@ class IngestionPipeline:
         if completed and not force and not needs_clap_backfill:
             preserved = self.store.ingestion_status(asset.id, completed[0])
             if preserved:
-                return {
-                    **preserved["stats"],
-                    "skipped": True,
-                    "preserved_completed": True,
-                }
+                return self._add_runtime_metrics(
+                    {
+                        **preserved["stats"],
+                        "skipped": True,
+                        "preserved_completed": True,
+                    },
+                    started,
+                )
         clap_only_backfill = bool(completed and not force and needs_clap_backfill)
         if force:
             self.store.clear_asset_evidence(asset.id)
@@ -281,10 +293,12 @@ class IngestionPipeline:
                 )
                 self.store.set_metadata("audio_embedding_dimensions", 512)
             stats.update(self._cache_stats)
+            self._add_runtime_metrics(stats, started)
             self.store.mark_ingestion(asset.id, fingerprint, "complete", stats)
             return stats
         except Exception as exc:
             stats.update(self._cache_stats)
+            self._add_runtime_metrics(stats, started)
             self.store.mark_ingestion(asset.id, fingerprint, "failed", {**stats, "error": str(exc)})
             raise
 

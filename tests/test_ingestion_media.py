@@ -39,7 +39,11 @@ def test_metadata_ingestion_is_restartable(tmp_path):
     second = pipeline.ingest_asset(asset)
 
     assert first["segments"] == 4
+    assert first["latency_seconds"] >= 0
+    assert first["peak_rss_mb"] is None or first["peak_rss_mb"] > 0
     assert second["skipped"] is True
+    assert second["latency_seconds"] >= 0
+    assert second["peak_rss_mb"] is None or second["peak_rss_mb"] > 0
     store.close()
 
 
