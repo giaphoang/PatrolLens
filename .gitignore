@@ -1,5 +1,6 @@
 .patrol-lens/
 .patrol-lens-models/
+compressed_video_corpus/
 .venv/
 __pycache__/
 *.py[cod]

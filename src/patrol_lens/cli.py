@@ -17,7 +17,7 @@ from .adapters.asr import (
     OpenRouterASR,
 )
 from .adapters.clap import DEFAULT_CLAP_MODEL, ClapCoreMLBackend
-from .adapters.media import extract_audio, iter_video_files, probe_video
+from .adapters.media import compress_video_480p, extract_audio, iter_video_files, probe_video
 from .adapters.openrouter import (
     EmbeddingDimensionError,
     OpenRouterEmbeddingClient,
@@ -236,6 +236,68 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             raise RuntimeError(f"no supported video files found under {args.input}")
         stats = [pipeline.ingest_path(path, force=args.force) for path in videos]
         _print({"index": str(store.root), "videos": stats})
+
+
+def cmd_compress(args: argparse.Namespace) -> None:
+    if not 0 <= args.crf <= 51:
+        raise ValueError("--crf must be between 0 and 51")
+    source_root = Path(args.input).expanduser().resolve()
+    output_root = Path(args.output).expanduser().resolve()
+    if source_root.is_dir() and (
+        output_root == source_root or source_root in output_root.parents
+    ):
+        raise ValueError("--output must be outside the input corpus")
+
+    videos = list(iter_video_files(source_root))
+    if not videos:
+        raise RuntimeError(f"no supported video files found under {source_root}")
+    output_root.mkdir(parents=True, exist_ok=True)
+    entries: list[dict[str, object]] = []
+    destinations: set[Path] = set()
+    for source in videos:
+        relative = Path(source.name) if source_root.is_file() else source.relative_to(source_root)
+        destination = (output_root / relative).with_suffix(".mp4")
+        if destination in destinations:
+            raise RuntimeError(f"multiple source videos map to {destination}")
+        destinations.add(destination)
+        skipped = destination.is_file() and destination.stat().st_size > 0 and not args.overwrite
+        source_bytes = source.stat().st_size
+        compress_video_480p(
+            source,
+            destination,
+            crf=args.crf,
+            preset=args.preset,
+            overwrite=args.overwrite,
+        )
+        output_bytes = destination.stat().st_size
+        entries.append(
+            {
+                "source": str(source),
+                "output": str(destination),
+                "skipped": skipped,
+                "source_bytes": source_bytes,
+                "output_bytes": output_bytes,
+                "size_reduction_percent": round(
+                    (1 - output_bytes / source_bytes) * 100,
+                    2,
+                ) if source_bytes else 0.0,
+            }
+        )
+
+    manifest = {
+        "input": str(source_root),
+        "output": str(output_root),
+        "format": "H.264/AAC MP4",
+        "maximum_resolution": [854, 480],
+        "crf": args.crf,
+        "preset": args.preset,
+        "videos": entries,
+    }
+    manifest_path = output_root / "compression-manifest.json"
+    temporary_manifest = output_root / ".compression-manifest.partial.json"
+    temporary_manifest.write_text(json.dumps(manifest, indent=2))
+    temporary_manifest.replace(manifest_path)
+    _print({**manifest, "manifest": str(manifest_path)})
 
 
 def cmd_migrate_embeddings(args: argparse.Namespace) -> None:
@@ -616,6 +678,33 @@ def build_parser() -> argparse.ArgumentParser:
     _add_ingest_arguments(ingest)
     index = commands.add_parser("index", help="Alias for ingest")
     _add_ingest_arguments(index)
+
+    compress = commands.add_parser(
+        "compress",
+        help="Create a separate resumable 480p video corpus",
+    )
+    compress.add_argument("input", help="Source video file or corpus directory")
+    compress.add_argument(
+        "--output",
+        default="compressed_video_corpus",
+        help="Destination corpus directory",
+    )
+    compress.add_argument(
+        "--crf",
+        type=int,
+        default=int(os.getenv("PATROLLENS_VIDEO_COMPRESSION_CRF", "23")),
+        help="H.264 quality: lower is higher quality and larger (0-51)",
+    )
+    compress.add_argument(
+        "--preset",
+        choices=[
+            "ultrafast", "superfast", "veryfast", "faster", "fast",
+            "medium", "slow", "slower", "veryslow",
+        ],
+        default="veryfast",
+    )
+    compress.add_argument("--overwrite", action="store_true")
+    compress.set_defaults(func=cmd_compress)
 
     retrieve = commands.add_parser("retrieve", help="Run cheap multimodal candidate retrieval only")
     retrieve.add_argument("query")

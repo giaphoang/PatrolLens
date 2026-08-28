@@ -6,6 +6,7 @@ import subprocess
 import pytest
 
 from patrol_lens.adapters.media import (
+    compress_video_480p,
     deduplicate_keyframes,
     extract_audio_segment,
     extract_clip,
@@ -40,6 +41,37 @@ def test_metadata_ingestion_is_restartable(tmp_path):
     assert first["segments"] == 4
     assert second["skipped"] is True
     store.close()
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="FFmpeg unavailable")
+def test_separate_480p_compression_is_resumable(tmp_path):
+    source = tmp_path / "source-high-resolution.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=blue:s=1440x1080:d=1",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-shortest",
+            "-c:v", "libx264", "-c:a", "aac", str(source),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    destination = tmp_path / "compressed_video_corpus" / "source.mp4"
+
+    first = compress_video_480p(
+        source,
+        destination,
+        preset="ultrafast",
+    )
+    modified_ns = first.stat().st_mtime_ns
+    compressed_asset = probe_video(first)
+    second = compress_video_480p(source, destination, preset="ultrafast")
+
+    assert first == destination.resolve()
+    assert compressed_asset.width <= 854
+    assert compressed_asset.height <= 480
+    assert compressed_asset.has_audio
+    assert second.stat().st_mtime_ns == modified_ns
 
 
 def test_completed_asset_is_preserved_across_backend_fingerprint_change(tmp_path):

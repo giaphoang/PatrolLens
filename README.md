@@ -12,7 +12,9 @@ It is not frame pooling and it does not upload an entire 90-minute video for eve
 
 ```mermaid
 flowchart LR
-    V["Bodycam videos<br/>up to 90 min"]
+    RAW["Original bodycam corpus"]
+    COMP["Separate patrol-lens compress command<br/>H.264/AAC · max 854×480"]
+    V["compressed_video_corpus"]
 
     subgraph OFF["1. Offline ingestion — once per video"]
         FF["FFmpeg / FFprobe"]
@@ -40,6 +42,7 @@ flowchart LR
     TL["Optional TimeLens2 adapter"]
     OUT["video + [start,end]<br/>confidence + evidence"]
 
+    RAW --> COMP --> V
     V --> FF
     FF --> CH --> GE --> IDX
     FF --> EXACT --> IDX
@@ -134,21 +137,34 @@ patrol-lens migrate-embeddings \
 
 This re-embeds canonical transcript text, historical OCR text, and visual image evidence into `pl_embeddings.embedding_768`, creates the `pl_embeddings_embedding_768_hnsw` index, and leaves any legacy `embedding` vectors intact for audit. Legacy raw-video/audio rows are deliberately not re-embedded; optimized ingestion recreates visual evidence as deduplicated keyframes and, in the full profile, audio as CLAP embeddings. Resume normal ingestion with the same environment and without `--force`.
 
-### 1. Ingest videos
+### 1. Compress and ingest videos
+
+Compression is a separate, resumable corpus-preparation command. It mirrors
+the input tree into `compressed_video_corpus`, converts every video to an
+H.264/AAC MP4 no larger than 854×480, and writes
+`compression-manifest.json`. It never writes video files into the index:
+
+```bash
+patrol-lens compress videos_corpus --output compressed_video_corpus
+```
+
+Existing non-empty outputs are skipped. Use `--overwrite` to rebuild them or
+`--crf` to change the default quality value of 23. You may also index the
+original corpus directly by omitting this separate compression command.
 
 Core profile: Gemini Embedding 2 for deduplicated keyframe and ASR text
 indexing plus OpenRouter `openai/whisper-large-v3-turbo` segment transcripts:
 
 ```bash
-patrol-lens ingest videos_corpus --index .patrol-lens --profile core
+patrol-lens ingest compressed_video_corpus --index .patrol-lens --profile core
 ```
 
 Full profile adds local larger_clap_general CoreML audio embeddings. CLAP
-decodes the original video directly at 48 kHz; it never uses Whisper's 16 kHz
-WAV:
+decodes the processing video directly at 48 kHz; it never uses Whisper's 16
+kHz WAV:
 
 ```bash
-patrol-lens ingest videos_corpus --index .patrol-lens --profile full
+patrol-lens ingest compressed_video_corpus --index .patrol-lens --profile full
 ```
 
 Use `--clap` to add CLAP to the core profile or `--no-clap` to disable it in
@@ -206,7 +222,7 @@ docker compose -f compose.pgvector.yaml up -d
 uv sync --extra postgres
 export PATROLLENS_DATABASE_URL='postgresql://patrol_lens:patrol_lens@localhost:5435/patrol_lens'
 
-patrol-lens ingest videos_corpus \
+patrol-lens ingest compressed_video_corpus \
   --backend postgres \
   --database-url "$PATROLLENS_DATABASE_URL" \
   --index .patrol-lens-artifacts \
@@ -217,7 +233,7 @@ Use the same `--backend postgres --database-url ...` flags for `retrieve`, `sear
 
 ```mermaid
 flowchart LR
-    RAW["Raw video"] --> LOCAL["Local scene/keyframe dedup\nASR · CLAP"]
+    C480["Video from separate compressed corpus"] --> LOCAL["Local scene/keyframe dedup\nASR · CLAP"]
     LOCAL --> E["pl_evidence\ncontent · timestamps · metadata\nevidence_hash"]
     E --> GE["Gemini Embedding 2\nunique images + ASR text\n768-d only"]
     E --> CE["larger_clap_general\nraw audio · 512-d only"]
@@ -288,7 +304,7 @@ Each accepted result contains:
 
 ## How a 90-minute video is handled
 
-At the defaults, one 90-minute video retains 674 overlapping 16-second temporal windows at an 8-second stride for joining and recall, samples about 5,400 frames at 1 FPS, and produces 1,079 CLAP windows at 10 seconds / 5-second stride. Temporal windows are never uploaded for embedding. CLAP streams 48 kHz mono float32 directly from the original video and retains only the overlap buffer; it does not write another full-length WAV. The separate 16 kHz extraction is used only for OpenRouter transcription.
+At the defaults, one 90-minute video retains 674 overlapping 16-second temporal windows at an 8-second stride for joining and recall, samples about 5,400 frames at 1 FPS, and produces 1,079 CLAP windows at 10 seconds / 5-second stride. Temporal windows are never uploaded for embedding. Ingestion reads its input video directly; use the separate `compress` command first when a 480p corpus is desired. CLAP streams 48 kHz mono float32 from that video and retains only the overlap buffer; it does not write another full-length WAV. The separate 16 kHz extraction is used only for OpenRouter transcription.
 
 At query time, exact FTS5/Postgres text search is retained for literal ASR
 strings and any historical evidence rows. Gemini Embedding 2 query vectors

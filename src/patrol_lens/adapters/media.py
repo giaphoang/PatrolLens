@@ -235,6 +235,60 @@ def extract_audio(video_path: str | Path, output_path: str | Path) -> Path:
     return destination
 
 
+def compress_video_480p(
+    video_path: str | Path,
+    output_path: str | Path,
+    *,
+    max_width: int = 854,
+    max_height: int = 480,
+    crf: int = 23,
+    preset: str = "veryfast",
+    overwrite: bool = False,
+) -> Path:
+    """Create an atomic, web-compatible 480p copy in a separate corpus.
+
+    The source is never modified. A completed destination is reused, while an
+    interrupted temporary output is overwritten on retry.
+    """
+
+    source = Path(video_path).expanduser().resolve()
+    destination = Path(output_path).expanduser().resolve()
+    if source == destination:
+        raise ValueError("compressed video destination must differ from its source")
+    if max_width <= 0 or max_height <= 0:
+        raise ValueError("compressed video dimensions must be positive")
+    if not 0 <= crf <= 51:
+        raise ValueError("video compression CRF must be between 0 and 51")
+    if not overwrite and destination.is_file() and destination.stat().st_size > 0:
+        return destination
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f"{destination.stem}.partial{destination.suffix}")
+    scale = (
+        f"scale=w=min(iw\\,{max_width}):h=min(ih\\,{max_height}):"
+        "force_original_aspect_ratio=decrease:force_divisible_by=2"
+    )
+    try:
+        _run(
+            [
+                _tool("ffmpeg"), "-y", "-i", str(source),
+                "-map", "0:v:0", "-map", "0:a:0?",
+                "-vf", scale,
+                "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k",
+                "-sn", "-dn", "-map_metadata", "-1",
+                "-movflags", "+faststart", str(temporary),
+            ],
+            label="480p video compression",
+        )
+        temporary.replace(destination)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    return destination
+
+
 def extract_audio_segment(
     video_path: str | Path,
     start_ms: int,

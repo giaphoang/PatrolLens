@@ -24,6 +24,8 @@ def test_cli_exposes_new_lifecycle():
     parser = build_parser()
 
     assert parser.parse_args(["ingest", "videos"]).command == "ingest"
+    compress = parser.parse_args(["compress", "videos_corpus"])
+    assert compress.output == "compressed_video_corpus"
     assert parser.parse_args(["retrieve", "red shirt"]).command == "retrieve"
     search = parser.parse_args(["search", "Miranda rights"])
     assert search.model == "google/gemini-3.1-pro-preview"

@@ -96,10 +96,12 @@ At retrieval time, pgvector returns the embedding row directly. The adapter reco
 
 ```mermaid
 flowchart LR
-    V["Bodycam MP4"] --> PROBE["FFprobe<br/>duration · FPS · streams"]
+    RAW["Original bodycam corpus"] --> COMP["Separate compression command<br/>H.264/AAC · max 854×480"]
+    COMP --> V["compressed_video_corpus"]
+    V --> PROBE["FFprobe<br/>duration · FPS · streams"]
     PROBE --> SEG["Overlapping temporal windows<br/>local join context only"]
     PROBE --> AUDIO["Decode 16 kHz mono once"]
-    PROBE --> CLAP_PCM["Stream 48 kHz mono float32\nfrom original video"]
+    PROBE --> CLAP_PCM["Stream 48 kHz mono float32"]
     PROBE --> FRAMES["Decode frame sequence once<br/>~1 FPS"]
 
     FRAMES --> CHANGE["Perceptual scene/change detection"]
@@ -133,7 +135,7 @@ flowchart LR
 | Semantic lookup | pgvector / FAISS | Independent cosine search over Gemini 768-d image/text and CLAP 512-d audio vectors |
 | Provenance | PostgreSQL | Model, confidence, source reference/hash, exact time span, and processing fingerprint |
 
-Processing windows organize temporal joining; they are not remote embedding units. ASR utterances, canonical visual intervals, and CLAP acoustic windows retain their own timestamps. Five-minute 16 kHz WAV chunks reach OpenRouter only for transcription. CLAP separately streams 48 kHz audio from the original video into a fixed 10-second CoreML input and never persists a second full-length WAV. Raw video reaches Gemini only through bounded tools after coarse retrieval. Current ingestion deliberately omits OCR, standalone speech-presence classification, and handcrafted RMS/pitch analysis.
+Compression is outside ingestion and outside the artifact root. `patrol-lens compress` atomically mirrors source videos into a separate 854×480 H.264/AAC corpus and records source/output mappings in a manifest. Ingestion then treats whichever corpus path it receives as canonical, without retaining another video copy under the index. Processing windows organize temporal joining; they are not remote embedding units. ASR utterances, canonical visual intervals, and CLAP acoustic windows retain their own timestamps. Five-minute 16 kHz WAV chunks reach OpenRouter only for transcription. CLAP streams 48 kHz audio into a fixed 10-second CoreML input and never persists a second full-length WAV. Raw video reaches Gemini only through bounded tools after coarse retrieval. Current ingestion deliberately omits OCR, standalone speech-presence classification, and handcrafted RMS/pitch analysis.
 
 ### Long-video behavior
 
