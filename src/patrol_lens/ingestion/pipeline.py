@@ -150,6 +150,39 @@ class IngestionPipeline:
     def ingest_path(self, path: str | Path, *, force: bool = False) -> dict[str, Any]:
         return self.ingest_asset(probe_video(path), force=force)
 
+    def ingestion_state(self, asset: VideoAsset, *, force: bool = False) -> str:
+        """Classify an asset for corpus scheduling without mutating the index."""
+
+        if force:
+            return "forced_rebuild"
+        fingerprint = self._fingerprint()
+        previous = self.store.ingestion_status(asset.id, fingerprint)
+        if previous and previous["status"] == "complete":
+            return "complete"
+        completed = self.store.completed_ingestion_fingerprints(asset.id)
+        if completed:
+            if self.backends.audio_embedding and asset.has_audio:
+                expected_clap = len(
+                    clap_intervals(
+                        asset.duration_ms,
+                        window_ms=self.config.clap_window_ms,
+                        stride_ms=self.config.clap_stride_ms,
+                    )
+                )
+                existing_clap = self.store.evidence_count(
+                    asset.id,
+                    modality="audio_event",
+                    source=self.backends.audio_embedding.model_name,
+                )
+                if expected_clap > existing_clap:
+                    return "clap_backfill"
+            return "complete"
+        if previous and previous["status"] == "failed":
+            return "retry_failed"
+        if previous and previous["status"] == "started":
+            return "resume_incomplete"
+        return "pending"
+
     @staticmethod
     def _add_runtime_metrics(stats: dict[str, Any], started: float) -> dict[str, Any]:
         stats["latency_seconds"] = round(time.perf_counter() - started, 3)

@@ -23,7 +23,16 @@ from patrol_lens.temporal.timelens2_adapter import should_use_timelens2
 def test_cli_exposes_new_lifecycle():
     parser = build_parser()
 
-    assert parser.parse_args(["ingest", "videos"]).command == "ingest"
+    ingest = parser.parse_args(["ingest", "videos"])
+    assert ingest.command == "ingest"
+    assert ingest.video_batch_size is None
+    assert ingest.cost_report is None
+    assert ingest.estimate_only is False
+    batched_ingest = parser.parse_args(
+        ["ingest", "videos", "--video-batch-size", "3", "--estimate-only"]
+    )
+    assert batched_ingest.video_batch_size == 3
+    assert batched_ingest.estimate_only is True
     compress = parser.parse_args(["compress", "videos_corpus"])
     assert compress.output == "compressed_video_corpus"
     assert parser.parse_args(["retrieve", "red shirt"]).command == "retrieve"

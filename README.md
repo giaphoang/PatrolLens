@@ -190,6 +190,45 @@ patrol-lens ingest videos_corpus --index .patrol-lens-smoke --profile metadata
 
 Ingestion is fingerprinted and restartable. Re-run the same command against the same `--index` to continue: completed videos are skipped, while failed or incomplete videos are retried. Each provider response is validated, saved immediately in a content-hash cache, and then attached to evidence in small committed batches. A retry reuses cached vectors instead of paying to embed completed items again. Do not use `--force` when continuing. Changing the embedding model, dimensions, or extraction settings creates a new fingerprint; use `--force` only for an intentional evidence rebuild (cached vectors are still reused when their full cache key matches).
 
+For bounded corpus runs, `--video-batch-size` selects only that many pending
+videos. Selection is deterministic: oldest file modification first, completed
+videos are removed before the limit is applied, and failed/incomplete videos
+remain eligible for retry. Use the same command again to advance to the next
+batch:
+
+```bash
+patrol-lens ingest compressed_video_corpus \
+  --backend postgres \
+  --database-url "$PATROLLENS_DATABASE_URL" \
+  --index .patrol-lens-artifacts \
+  --profile full \
+  --video-batch-size 3
+```
+
+Every invocation writes a per-video estimate before remote indexing starts:
+
+```text
+INDEX/reports/ingestion-cost-estimate.json
+```
+
+Preview the schedule and estimated cost without indexing:
+
+```bash
+patrol-lens ingest compressed_video_corpus \
+  --index .patrol-lens-artifacts \
+  --profile full \
+  --video-batch-size 3 \
+  --estimate-only
+```
+
+The report separates OpenRouter ASR, transcript embeddings, image embeddings,
+and zero-remote-cost local CLAP. It contains selected-batch, all-pending,
+remaining-after-batch, and gross totals. Existing keyframe manifests tighten the image estimate;
+otherwise it conservatively assumes every sampled frame is unique. Completed
+videos have zero incremental cost. Override the destination with
+`--cost-report PATH` and the pricing assumptions with the corresponding
+`PATROLLENS_ESTIMATED_*` environment variables.
+
 Each per-video ingestion report includes `latency_seconds` and `peak_rss_mb`. The latency covers `ingest_asset`; `peak_rss_mb` is the process high-water resident memory reported by the standard library, so it is cumulative when one CLI process ingests multiple videos and may be `null` on unsupported platforms.
 
 When CLAP is first enabled on an existing completed corpus, ingestion performs

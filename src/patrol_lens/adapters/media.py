@@ -184,14 +184,21 @@ def probe_video(path: str | Path) -> VideoAsset:
 
 def iter_video_files(path: str | Path) -> Iterator[Path]:
     root = Path(path).expanduser()
+
+    def supported(candidate: Path) -> bool:
+        return (
+            candidate.suffix.lower() in VIDEO_EXTENSIONS
+            and not candidate.stem.lower().endswith(".partial")
+        )
+
     if root.is_file():
-        if root.suffix.lower() in VIDEO_EXTENSIONS:
+        if supported(root):
             yield root.resolve()
         return
     if not root.exists():
         raise FileNotFoundError(root)
     for candidate in sorted(root.rglob("*")):
-        if candidate.is_file() and candidate.suffix.lower() in VIDEO_EXTENSIONS:
+        if candidate.is_file() and supported(candidate):
             yield candidate.resolve()
 
 

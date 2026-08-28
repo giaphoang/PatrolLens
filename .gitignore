@@ -16,7 +16,7 @@ __pycache__/
 *.jpg
 *.wav
 *.egg-info/
-/.partrol-lens-artifacts/runs/
+.patrol-lens-artifacts/
 /.partrol-lens-models/
 build/
 dist/

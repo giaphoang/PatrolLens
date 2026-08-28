@@ -36,9 +36,19 @@ from .config import (
     RetrievalConfig,
     SearchConfig,
 )
+from .domain import VideoAsset
 from .evaluate import evaluate_file
 from .index import AutoVectorIndex, IndexStore, PostgresIndexStore, PostgresVectorIndex
 from .ingestion import IngestionBackends, IngestionPipeline
+from .ingestion.planning import (
+    IngestionCostRates,
+    build_cost_report,
+    estimate_video_cost,
+    file_update_metadata,
+    prioritize_oldest,
+    select_pending_batch,
+    write_cost_report,
+)
 from .history import TrajectoryRecorder, list_history, show_history
 from .pipeline import SearchPipeline
 from .retrieval import CoarseRetriever, GeminiQueryPlanner, HeuristicQueryPlanner
@@ -243,14 +253,18 @@ def _clap_backend(
     return backend
 
 
-def _ingestion_backends(args: argparse.Namespace) -> IngestionBackends:
+def _ingestion_backends(
+    args: argparse.Namespace,
+    *,
+    run_embedding_canary: bool = True,
+) -> IngestionBackends:
     if args.profile == "metadata":
         return IngestionBackends()
     use_clap = args.clap if args.clap is not None else args.profile == "full"
     audio_embedding = _clap_backend(args, required=True) if use_clap else None
     asr = None if args.no_asr else _asr_backend(args)
     embedding = None if args.no_embeddings else _embedding(args)
-    if embedding is not None:
+    if embedding is not None and run_embedding_canary:
         _embedding_canary(embedding)
     visual = (
         None
@@ -280,6 +294,8 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         raise ValueError("--clap-stride-s cannot exceed --clap-window-s")
     if args.batch_size <= 0:
         raise ValueError("--batch-size must be positive")
+    if args.video_batch_size is not None and args.video_batch_size <= 0:
+        raise ValueError("--video-batch-size must be positive")
     if args.embedding_batch_size <= 0:
         raise ValueError("--embedding-batch-size must be positive")
     if args.asr_chunk_seconds <= 0 or args.asr_chunk_seconds > 600:
@@ -302,17 +318,143 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             embedding_batch_size=args.embedding_batch_size,
             embed_images=not args.no_visual and not args.no_embedding_images,
         )
+        backends = _ingestion_backends(args, run_embedding_canary=False)
         pipeline = IngestionPipeline(
             store,
-            backends=_ingestion_backends(args),
+            backends=backends,
             config=config,
             vector_index=_vector_index(store),
         )
-        videos = list(iter_video_files(args.input))
+        videos = prioritize_oldest(iter_video_files(args.input))
         if not videos:
             raise RuntimeError(f"no supported video files found under {args.input}")
-        stats = [pipeline.ingest_path(path, force=args.force) for path in videos]
-        _print({"index": str(store.root), "videos": stats})
+        rates = IngestionCostRates.from_env()
+        assets: dict[str, VideoAsset] = {}
+        entries: list[dict[str, object]] = []
+        pending_rank = 0
+        for priority_rank, path in enumerate(videos, start=1):
+            asset = probe_video(path)
+            assets[asset.path] = asset
+            scheduling_state = pipeline.ingestion_state(asset, force=args.force)
+            if scheduling_state != "complete":
+                pending_rank += 1
+            entry: dict[str, object] = {
+                "priority_rank": priority_rank,
+                "pending_rank": pending_rank if scheduling_state != "complete" else None,
+                "video_id": asset.id,
+                "path": asset.path,
+                "duration_seconds": round(asset.duration_ms / 1000, 3),
+                "resolution": [asset.width, asset.height],
+                "has_audio": asset.has_audio,
+                **file_update_metadata(path),
+                "scheduling_state": scheduling_state,
+                "selected_for_batch": False,
+                "cost_estimate": estimate_video_cost(
+                    asset,
+                    artifact_root=store.root,
+                    config=config,
+                    scheduling_state=scheduling_state,
+                    asr_enabled=backends.asr is not None,
+                    remote_asr_enabled=isinstance(backends.asr, OpenRouterASR),
+                    embedding_enabled=backends.embedding is not None,
+                    image_embedding_enabled=(
+                        backends.embedding is not None and config.embed_images
+                    ),
+                    clap_enabled=backends.audio_embedding is not None,
+                    rates=rates,
+                ),
+                "execution": {"status": "not_selected"},
+            }
+            entries.append(entry)
+
+        selected_entries = select_pending_batch(entries, args.video_batch_size)
+        for entry in selected_entries:
+            entry["selected_for_batch"] = True
+            entry["execution"] = {"status": "planned"}
+
+        report = build_cost_report(
+            entries,
+            input_root=args.input,
+            artifact_root=store.root,
+            video_batch_size=args.video_batch_size,
+            rates=rates,
+        )
+        report["execution"] = {
+            "status": "estimate_only" if args.estimate_only else "planned",
+            "completed_videos": 0,
+            "failed_videos": 0,
+        }
+        report["models"] = {
+            "asr": getattr(backends.asr, "model_name", None),
+            "embedding": getattr(backends.embedding, "model_name", None),
+            "embedding_dimensions": config.embedding_dimensions,
+            "audio_embedding": getattr(backends.audio_embedding, "model_name", None),
+        }
+        report_path = write_cost_report(
+            report,
+            args.cost_report or store.root / "reports" / "ingestion-cost-estimate.json",
+        )
+        if args.estimate_only or not selected_entries:
+            _print(
+                {
+                    "index": str(store.root),
+                    "cost_report": str(report_path),
+                    "estimate": report["summary"],
+                    "videos": [],
+                }
+            )
+            return
+
+        if backends.embedding is not None:
+            try:
+                _embedding_canary(backends.embedding)
+            except Exception as exc:
+                report["execution"] = {
+                    "status": "failed",
+                    "failed_stage": "embedding_canary",
+                    "error": {"type": type(exc).__name__, "message": str(exc)},
+                    "completed_videos": 0,
+                    "failed_videos": 0,
+                }
+                write_cost_report(report, report_path)
+                raise
+        stats: list[dict[str, object]] = []
+        report["execution"]["status"] = "running"
+        write_cost_report(report, report_path)
+        for entry in selected_entries:
+            asset = assets[str(entry["path"])]
+            entry["execution"] = {"status": "running"}
+            write_cost_report(report, report_path)
+            try:
+                video_stats = pipeline.ingest_asset(asset, force=args.force)
+            except Exception as exc:
+                entry["execution"] = {
+                    "status": "failed",
+                    "error": {"type": type(exc).__name__, "message": str(exc)},
+                }
+                report["execution"]["status"] = "failed"
+                report["execution"]["failed_videos"] += 1
+                write_cost_report(report, report_path)
+                raise
+            asr_runtime = getattr(backends.asr, "last_runtime_info", None)
+            entry["execution"] = {
+                "status": "complete",
+                "ingestion_stats": video_stats,
+                "asr_runtime": asr_runtime if isinstance(asr_runtime, dict) else None,
+            }
+            stats.append(video_stats)
+            report["execution"]["completed_videos"] += 1
+            write_cost_report(report, report_path)
+        report["execution"]["status"] = "complete"
+        write_cost_report(report, report_path)
+        _print(
+            {
+                "index": str(store.root),
+                "cost_report": str(report_path),
+                "estimate": report["summary"],
+                "videos": stats,
+            }
+        )
 
 
 def cmd_compress(args: argparse.Namespace) -> None:
@@ -747,6 +889,21 @@ def _add_ingest_arguments(parser: argparse.ArgumentParser) -> None:
         default=float(os.getenv("PATROLLENS_CLAP_STRIDE_SECONDS", "5")),
     )
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument(
+        "--video-batch-size",
+        type=int,
+        default=None,
+        help="Process only this many pending videos, oldest modification first",
+    )
+    parser.add_argument(
+        "--cost-report",
+        help="Cost report path (default: INDEX/reports/ingestion-cost-estimate.json)",
+    )
+    parser.add_argument(
+        "--estimate-only",
+        action="store_true",
+        help="Generate the ordered per-video cost report without indexing",
+    )
     parser.add_argument("--force", action="store_true")
     parser.set_defaults(func=cmd_ingest)
 

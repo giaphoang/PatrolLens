@@ -11,6 +11,7 @@ from patrol_lens.adapters.media import (
     extract_audio_segment,
     extract_clip,
     extract_frame,
+    iter_video_files,
     iter_segments,
     probe_video,
 )
@@ -30,12 +31,24 @@ def test_ninety_minute_video_uses_overlapping_coarse_windows():
     assert segments[-1].end_ms == asset.duration_ms
 
 
+def test_video_discovery_ignores_interrupted_compression_outputs(tmp_path):
+    complete = tmp_path / "complete.mp4"
+    partial = tmp_path / "interrupted.partial.mp4"
+    complete.write_bytes(b"complete")
+    partial.write_bytes(b"partial")
+
+    assert list(iter_video_files(tmp_path)) == [complete.resolve()]
+
+
 def test_metadata_ingestion_is_restartable(tmp_path):
     store = IndexStore(tmp_path / "index")
     pipeline = IngestionPipeline(store, config=IngestionConfig())
     asset = VideoAsset("v1", "/not/read/without/backends.mp4", "hash", 33_000, has_audio=False)
 
+    assert pipeline.ingestion_state(asset) == "pending"
     first = pipeline.ingest_asset(asset)
+    assert pipeline.ingestion_state(asset) == "complete"
+    assert pipeline.ingestion_state(asset, force=True) == "forced_rebuild"
     second = pipeline.ingest_asset(asset)
 
     assert first["segments"] == 4

@@ -149,6 +149,32 @@ For 90 minutes, `W=16 s`, and `S=8 s`, the implementation retains 674 local temp
 
 There is no “replication worker” in this design. Horizontal ingestion workers may claim different videos, but SQLite/FAISS/pgvector replication is a deployment concern, not a semantic pipeline stage. Each video is fingerprinted by extraction settings and model namespaces: re-running the same command skips completed videos, while a failed video can be retried without `--force`; changing model, dimensions, or chunk settings intentionally selects a new ingestion fingerprint.
 
+### Corpus scheduling and cost estimation
+
+Corpus ingestion is scheduled oldest-file-update first. Before applying a
+video batch limit, the scheduler classifies each asset as complete, pending,
+incomplete, failed/retryable, forced rebuild, or local CLAP backfill. Complete
+assets are excluded, preventing a small repeated batch from getting stuck on
+the same already-indexed videos.
+
+```mermaid
+flowchart LR
+    C["Corpus"] --> MT["Sort by file mtime ascending"]
+    MT --> STATE["Read durable ingestion state"]
+    STATE -->|complete| SKIP["Exclude"]
+    STATE -->|pending/retry/backfill| COST["Estimate per-video cost"]
+    COST --> REPORT["Atomic JSON cost report"]
+    REPORT --> LIMIT["Take oldest N pending videos"]
+    LIMIT --> INGEST["Restartable per-video ingestion"]
+```
+
+The report estimates Whisper from audio duration, transcript embedding tokens
+from a configurable tokens-per-minute assumption, and image embedding tokens
+from frame sampling plus Gemini image tiling. Existing matching keyframe
+manifests replace the all-frames-unique upper bound. CLAP remains local and has
+zero remote inference cost. Rates and assumptions are recorded in each report
+and can be overridden without changing the indexing fingerprint.
+
 ## 2. Query planning and coarse retrieval
 
 ```mermaid
