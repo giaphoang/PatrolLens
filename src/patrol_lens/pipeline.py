@@ -4,7 +4,7 @@ import queue
 import threading
 import time
 from dataclasses import dataclass, replace
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from .agent.gemini_agent import ActivePerceptionAgent, AgentRunResult
 from .config import SearchConfig
@@ -21,6 +21,9 @@ from .index.sqlite_store import IndexStore
 from .retrieval.search import CoarseRetriever
 from .temporal.refine import LightweightTimestampRefiner
 from .temporal.timelens2_adapter import TimeLens2Adapter, should_use_timelens2
+
+if TYPE_CHECKING:
+    from .history import TrajectoryRecorder
 
 
 class EventVerifier(Protocol):
@@ -46,6 +49,8 @@ class _CandidateOutcome:
     results: tuple[EvidenceResult, ...] = ()
     warning: str | None = None
     cancelled: bool = False
+    status: str | None = None
+    confidence: float | None = None
 
 
 class _SearchControl:
@@ -72,8 +77,8 @@ class _SearchControl:
 
     def take_task(
         self,
-        work: queue.Queue[tuple[CandidateInterval, VideoAsset]],
-    ) -> tuple[CandidateInterval, VideoAsset] | None:
+        work: queue.Queue[tuple[CandidateInterval, VideoAsset, int]],
+    ) -> tuple[CandidateInterval, VideoAsset, int] | None:
         """Claim queued work atomically with respect to stop/winner changes."""
 
         with self._lock:
@@ -106,6 +111,7 @@ class SearchPipeline:
         *,
         timelens2: TimeLens2Adapter | None = None,
         config: SearchConfig | None = None,
+        recorder: TrajectoryRecorder | None = None,
     ) -> None:
         self.store = store
         self.retriever = retriever
@@ -114,6 +120,7 @@ class SearchPipeline:
         self.refiner = refiner
         self.timelens2 = timelens2
         self.config = config or SearchConfig()
+        self.recorder = recorder
 
     @staticmethod
     def _required_direct_modalities(plan: QueryPlan) -> set[str]:
@@ -173,10 +180,28 @@ class SearchPipeline:
             return ()
         if self._deadline_reached(deadline):
             return ()
-        try:
-            grounded = self.refiner.refine(
-                query, plan, candidate, asset, verification, run.memory
+        refinement_event: str | None = None
+        if self.recorder:
+            refinement_event = self.recorder.emit(
+                "refinement_started",
+                stage="refinement",
+                status="started",
+                input_summary={
+                    "start_ms": verification.start_ms,
+                    "end_ms": verification.end_ms,
+                    "confidence": verification.confidence,
+                },
             )
+        try:
+            if self.recorder:
+                with self.recorder.scope(stage="refinement", parent_id=refinement_event):
+                    grounded = self.refiner.refine(
+                        query, plan, candidate, asset, verification, run.memory
+                    )
+            else:
+                grounded = self.refiner.refine(
+                    query, plan, candidate, asset, verification, run.memory
+                )
         except Exception as exc:  # noqa: BLE001 - verified interval remains a safe fallback
             grounded = replace(
                 verification,
@@ -213,7 +238,7 @@ class SearchPipeline:
                     grounded,
                     warnings=[*grounded.warnings, f"timelens2_failed:{exc}"],
                 )
-        return tuple(
+        results = tuple(
             self._as_result(
                 candidate,
                 asset,
@@ -225,8 +250,18 @@ class SearchPipeline:
             )
             for start_ms, end_ms, confidence in intervals
         )
+        if self.recorder:
+            self.recorder.emit(
+                "refinement_completed",
+                stage="refinement",
+                parent_id=refinement_event,
+                status="completed",
+                confidence=max((item.confidence for item in results), default=grounded.confidence),
+                output_summary={"method": method, "results": [item.to_dict() for item in results]},
+            )
+        return results
 
-    def _evaluate_candidate(
+    def _evaluate_candidate_inner(
         self,
         query: str,
         plan: QueryPlan,
@@ -264,9 +299,14 @@ class SearchPipeline:
             return _CandidateOutcome(
                 candidate.id,
                 warning=f"candidate_failed:{candidate.id}:{exc}",
+                status="failed",
             )
         if verification.status != "supported":
-            return _CandidateOutcome(candidate.id)
+            return _CandidateOutcome(
+                candidate.id,
+                status=verification.status,
+                confidence=verification.confidence,
+            )
 
         direct_satisfied = self._required_direct_modalities(plan).issubset(
             run.memory.direct_modalities()
@@ -281,19 +321,39 @@ class SearchPipeline:
         won_early_stop = bool(
             qualifies and control and control.claim_winner(candidate.id, verification.confidence)
         )
-        if control and control.cancel_event.is_set() and not (
-            won_early_stop or control.is_winner(candidate.id)
-        ):
-            return _CandidateOutcome(candidate.id, cancelled=True)
-
+        if won_early_stop and self.recorder:
+            self.recorder.emit(
+                "early_stop",
+                stage="candidate_verification",
+                status="triggered",
+                confidence=verification.confidence,
+                output_summary={
+                    "threshold": self.config.early_stop_confidence,
+                    "direct_modalities": sorted(run.memory.direct_modalities()),
+                },
+            )
         provisional = self._as_result(
             candidate,
             asset,
             verification,
             method="gemini_verifier",
         )
+        if self.recorder:
+            self.recorder.record_partial_result(
+                provisional.to_dict(), provisional.confidence
+            )
         if progress is not None:
             progress.put(_CandidateProgress(candidate.id, provisional))
+        if control and control.cancel_event.is_set() and not (
+            won_early_stop or control.is_winner(candidate.id)
+        ):
+            return _CandidateOutcome(
+                candidate.id,
+                (provisional,),
+                cancelled=True,
+                status="supported",
+                confidence=verification.confidence,
+            )
         grounded = self._ground_supported(
             query,
             plan,
@@ -304,7 +364,104 @@ class SearchPipeline:
             control=control,
             deadline=deadline,
         )
-        return _CandidateOutcome(candidate.id, grounded or (provisional,))
+        return _CandidateOutcome(
+            candidate.id,
+            grounded or (provisional,),
+            status="supported",
+            confidence=verification.confidence,
+        )
+
+    def _evaluate_candidate(
+        self,
+        query: str,
+        plan: QueryPlan,
+        candidate: CandidateInterval,
+        asset: VideoAsset,
+        *,
+        candidate_rank: int | None = None,
+        control: _SearchControl | None = None,
+        deadline: float | None = None,
+        progress: queue.Queue[object] | None = None,
+    ) -> _CandidateOutcome:
+        candidate_event: str | None = None
+        if self.recorder:
+            candidate_event = self.recorder.emit(
+                "candidate_started",
+                stage="candidate",
+                candidate_id=candidate.id,
+                candidate_rank=candidate_rank,
+                status="started",
+                input_summary={
+                    "video_id": candidate.video_id,
+                    "start_ms": candidate.start_ms,
+                    "end_ms": candidate.end_ms,
+                    "retrieval_score": candidate.score,
+                },
+            )
+            with self.recorder.scope(
+                stage="candidate",
+                candidate_id=candidate.id,
+                candidate_rank=candidate_rank,
+                parent_id=candidate_event,
+            ):
+                outcome = self._evaluate_candidate_inner(
+                    query,
+                    plan,
+                    candidate,
+                    asset,
+                    control=control,
+                    deadline=deadline,
+                    progress=progress,
+                )
+        else:
+            outcome = self._evaluate_candidate_inner(
+                query,
+                plan,
+                candidate,
+                asset,
+                control=control,
+                deadline=deadline,
+                progress=progress,
+            )
+        if self.recorder:
+            if outcome.cancelled:
+                event_type = "candidate_cancelled"
+                status = "cancelled"
+            elif outcome.status == "supported":
+                event_type = "candidate_supported"
+                status = "supported"
+            elif outcome.status in {"rejected", "uncertain"}:
+                event_type = "candidate_rejected"
+                status = outcome.status
+            elif outcome.warning:
+                event_type = "provider_error"
+                status = "failed"
+            else:
+                event_type = "candidate_verified"
+                status = outcome.status or "completed"
+            self.recorder.emit(
+                "candidate_verified",
+                stage="candidate_verification",
+                parent_id=candidate_event,
+                candidate_id=candidate.id,
+                candidate_rank=candidate_rank,
+                status=outcome.status or status,
+                confidence=outcome.confidence,
+                output_summary={"result_count": len(outcome.results), "warning": outcome.warning},
+            )
+            if event_type != "candidate_verified":
+                self.recorder.emit(
+                    event_type,
+                    stage="candidate",
+                    parent_id=candidate_event,
+                    candidate_id=candidate.id,
+                    candidate_rank=candidate_rank,
+                    status=status,
+                    confidence=outcome.confidence,
+                    error=outcome.warning,
+                    output_summary={"results": [item.to_dict() for item in outcome.results]},
+                )
+        return outcome
 
     def _response(
         self,
@@ -317,7 +474,7 @@ class SearchPipeline:
         index_version: str | None = None,
     ) -> SearchResponse:
         results.sort(key=lambda item: (item.confidence, item.retrieval_score), reverse=True)
-        return SearchResponse(
+        response = SearchResponse(
             query=query,
             plan=plan,
             results=results,
@@ -329,19 +486,57 @@ class SearchPipeline:
             ),
             warnings=warnings,
         )
+        if self.recorder:
+            best = results[0].to_dict() if results else None
+            self.recorder.update_summary(
+                candidates_examined=examined,
+                best_partial_result=best,
+                result_count=len(results),
+                best_confidence=results[0].confidence if results else None,
+            )
+        return response
+
+    def _preflight_budget(self, candidate_count: int) -> bool:
+        if not self.recorder:
+            return False
+        estimate = self.recorder.estimate_cost(
+            candidate_count=candidate_count,
+            calls_per_candidate=getattr(
+                getattr(self.agent, "config", None), "max_turns", 5
+            )
+            + 2,
+        )
+        if (
+            self.config.max_run_cost_usd is not None
+            and estimate > self.config.max_run_cost_usd
+        ):
+            self.recorder.deny_estimated_cost(estimate)
+            return True
+        return False
 
     def _search_sequential(self, query: str, *, max_candidates: int) -> SearchResponse:
         plan, candidates = self.retriever.retrieve(query)
         results: list[EvidenceResult] = []
         warnings: list[str] = []
         examined = 0
-        for candidate in candidates[:max_candidates]:
+        selected = candidates[:max_candidates]
+        if self._preflight_budget(len(selected)):
+            return self._response(
+                query,
+                plan,
+                [],
+                0,
+                ["run_cost_denied:estimated_upper_bound_exceeds_limit"],
+            )
+        for rank, candidate in enumerate(selected, start=1):
             asset = self.store.get_asset(candidate.video_id)
             if asset is None:
                 warnings.append(f"missing_asset:{candidate.video_id}")
                 continue
             examined += 1
-            outcome = self._evaluate_candidate(query, plan, candidate, asset)
+            outcome = self._evaluate_candidate(
+                query, plan, candidate, asset, candidate_rank=rank
+            )
             if outcome.warning:
                 warnings.append(outcome.warning)
             results.extend(outcome.results)
@@ -377,6 +572,13 @@ class SearchPipeline:
         deadline = started + self.config.timeout_s if self.config.timeout_s is not None else None
         index_version = str(self.store.get_metadata("index_version", "unknown"))
         if self._deadline_reached(deadline):
+            if self.recorder:
+                self.recorder.emit(
+                    "timeout",
+                    stage="metadata",
+                    status="timeout",
+                    output_summary={"timeout_s": self.config.timeout_s},
+                )
             return self._response(
                 query,
                 QueryPlan(original_text=query),
@@ -390,6 +592,13 @@ class SearchPipeline:
         else:
             retrieved = self._retrieve_with_deadline(query, deadline)
             if retrieved is None:
+                if self.recorder:
+                    self.recorder.emit(
+                        "timeout",
+                        stage="retrieval",
+                        status="timeout",
+                        output_summary={"timeout_s": self.config.timeout_s},
+                    )
                 return self._response(
                     query,
                     QueryPlan(original_text=query),
@@ -401,23 +610,35 @@ class SearchPipeline:
             plan, candidates = retrieved
 
         warnings: list[str] = []
-        tasks: list[tuple[CandidateInterval, VideoAsset]] = []
-        for candidate in candidates[:max_candidates]:
+        tasks: list[tuple[CandidateInterval, VideoAsset, int]] = []
+        for rank, candidate in enumerate(candidates[:max_candidates], start=1):
             asset = self.store.get_asset(candidate.video_id)
             if asset is None:
                 warnings.append(f"missing_asset:{candidate.video_id}")
             else:
-                tasks.append((candidate, asset))
+                tasks.append((candidate, asset, rank))
         if not tasks:
             return self._response(
                 query, plan, [], 0, warnings, index_version=index_version
             )
 
-        work: queue.Queue[tuple[CandidateInterval, VideoAsset]] = queue.Queue()
+        if self._preflight_budget(len(tasks)):
+            return self._response(
+                query,
+                plan,
+                [],
+                0,
+                ["run_cost_denied:estimated_upper_bound_exceeds_limit"],
+                index_version=index_version,
+            )
+
+        work: queue.Queue[tuple[CandidateInterval, VideoAsset, int]] = queue.Queue()
         events: queue.Queue[object] = queue.Queue()
         for task in tasks:
             work.put(task)
         control = _SearchControl()
+        if self.recorder:
+            self.recorder.register_budget_listener(control.cancel)
         examined = 0
         examined_lock = threading.Lock()
         worker_count = min(self.config.candidate_parallelism, len(tasks))
@@ -432,7 +653,7 @@ class SearchPipeline:
                     task = control.take_task(work)
                     if task is None:
                         break
-                    candidate, asset = task
+                    candidate, asset, candidate_rank = task
                     with examined_lock:
                         examined += 1
                     outcome = self._evaluate_candidate(
@@ -440,6 +661,7 @@ class SearchPipeline:
                         plan,
                         candidate,
                         asset,
+                        candidate_rank=candidate_rank,
                         control=control,
                         deadline=deadline,
                         progress=events,
@@ -508,6 +730,23 @@ class SearchPipeline:
                 "search_timeout_returning_best_supported"
                 if results_by_candidate
                 else "search_timeout_no_supported_result"
+            )
+            if self.recorder:
+                self.recorder.emit(
+                    "timeout",
+                    stage="search",
+                    status="timeout",
+                    output_summary={
+                        "timeout_s": self.config.timeout_s,
+                        "candidates_examined": examined,
+                        "supported_candidates": len(results_by_candidate),
+                    },
+                )
+        if self.recorder and self.recorder.budget_exceeded:
+            warnings.append(
+                "run_cost_budget_reached_returning_best_supported"
+                if results_by_candidate
+                else "run_cost_budget_reached_no_supported_result"
             )
         results = [
             result

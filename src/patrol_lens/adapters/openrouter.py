@@ -6,13 +6,17 @@ import math
 import mimetypes
 import os
 import threading
+import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config import (
     DEFAULT_GEMINI_EMBEDDING_MODEL,
     DEFAULT_GEMINI_MODEL,
 )
+
+if TYPE_CHECKING:
+    from ..history import TrajectoryRecorder
 
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MAX_INLINE_MEDIA_BYTES = 18 * 1024 * 1024
@@ -77,6 +81,7 @@ class OpenRouterJSONClient:
         title: str | None = None,
         timeout_s: float = 120.0,
         max_inline_media_bytes: int = DEFAULT_MAX_INLINE_MEDIA_BYTES,
+        recorder: TrajectoryRecorder | None = None,
     ) -> None:
         self.model = model
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
@@ -85,6 +90,7 @@ class OpenRouterJSONClient:
         self.title = title or os.getenv("PATROLLENS_OPENROUTER_TITLE")
         self.timeout_s = timeout_s
         self.max_inline_media_bytes = max_inline_media_bytes
+        self.recorder = recorder
         self._client: Any = None
         self._client_lock = threading.Lock()
         if not self.api_key:
@@ -225,12 +231,52 @@ class OpenRouterJSONClient:
 
         messages = [{"role": "user", "content": parts}]
         selected_model = model or self.model
+
+        def complete(
+            request_messages: list[dict[str, Any]],
+            request_schema: dict[str, Any] | None,
+            *,
+            retry: bool = False,
+        ) -> Any:
+            request_id: str | None = None
+            started = time.monotonic()
+            if self.recorder:
+                request_id, started = self.recorder.model_request(
+                    model=selected_model,
+                    input_summary={
+                        "prompt": prompt,
+                        "structured_output": request_schema is not None,
+                        "plain_json_retry": retry,
+                    },
+                    media_references=list(media_paths or []),
+                )
+            try:
+                result = self._create_completion(
+                    model=selected_model,
+                    messages=request_messages,
+                    schema=request_schema,
+                )
+            except Exception as exc:
+                if self.recorder:
+                    self.recorder.provider_error(
+                        exc,
+                        model=selected_model,
+                        request_event_id=request_id,
+                        started_monotonic=started,
+                    )
+                raise
+            if self.recorder and request_id is not None:
+                self.recorder.model_response(
+                    result,
+                    request_event_id=request_id,
+                    started_monotonic=started,
+                    model=selected_model,
+                    output_summary={"choice_count": len(getattr(result, "choices", None) or [])},
+                )
+            return result
+
         try:
-            response = self._create_completion(
-                model=selected_model,
-                messages=messages,
-                schema=schema,
-            )
+            response = complete(messages, schema)
         except Exception as exc:
             if not self._supports_plain_json_retry(exc):
                 raise
@@ -242,11 +288,7 @@ class OpenRouterJSONClient:
                 "role": "user",
                 "content": [{"type": "text", "text": fallback_prompt}, *parts[1:]],
             }]
-            response = self._create_completion(
-                model=selected_model,
-                messages=fallback_messages,
-                schema=None,
-            )
+            response = complete(fallback_messages, None, retry=True)
 
         choices = getattr(response, "choices", None) or []
         if not choices:
@@ -287,6 +329,7 @@ class OpenRouterEmbeddingClient:
         timeout_s: float = 120.0,
         max_inline_media_bytes: int = DEFAULT_MAX_INLINE_MEDIA_BYTES,
         media_batch_size: int = 6,
+        recorder: TrajectoryRecorder | None = None,
     ) -> None:
         if dimensions <= 0 or dimensions > 3072:
             raise ValueError("Gemini Embedding 2 dimensions must be between 1 and 3072")
@@ -307,6 +350,7 @@ class OpenRouterEmbeddingClient:
         self.timeout_s = timeout_s
         self.max_inline_media_bytes = max_inline_media_bytes
         self.media_batch_size = media_batch_size
+        self.recorder = recorder
         self._client: Any = None
         if not self.api_key:
             raise RuntimeError("OPENROUTER_API_KEY is required for Gemini Embedding 2")
@@ -364,7 +408,36 @@ class OpenRouterEmbeddingClient:
         headers = self._embedding_headers()
         if headers:
             payload["extra_headers"] = headers
-        response = self._load().embeddings.create(**payload)
+        request_id: str | None = None
+        started = time.monotonic()
+        if self.recorder:
+            request_id, started = self.recorder.model_request(
+                model=model,
+                input_summary={
+                    "operation": "embedding",
+                    "input_count": len(inputs),
+                    "dimensions": self.dimensions,
+                },
+            )
+        try:
+            response = self._load().embeddings.create(**payload)
+        except Exception as exc:
+            if self.recorder:
+                self.recorder.provider_error(
+                    exc,
+                    model=model,
+                    request_event_id=request_id,
+                    started_monotonic=started,
+                )
+            raise
+        if self.recorder and request_id is not None:
+            self.recorder.model_response(
+                response,
+                request_event_id=request_id,
+                started_monotonic=started,
+                model=model,
+                output_summary={"embedding_count": len(self._field(response, "data", []) or [])},
+            )
         data = self._field(response, "data", []) or []
         if not isinstance(data, list):
             raise RuntimeError("OpenRouter returned an invalid embeddings response")

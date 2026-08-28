@@ -8,6 +8,7 @@ import pytest
 
 from patrol_lens.config import SearchConfig
 from patrol_lens.domain import CandidateInterval, QueryPlan, VerificationResult, VideoAsset
+from patrol_lens.history import TrajectoryRecorder, show_history
 from patrol_lens.pipeline import SearchPipeline
 
 
@@ -120,7 +121,7 @@ def candidates(count=4):
     ]
 
 
-def pipeline(items, agent, verifier, config, *, retrieval_delay=0.0):
+def pipeline(items, agent, verifier, config, *, retrieval_delay=0.0, recorder=None):
     plan = QueryPlan(
         "white shirt woman starts crying",
         visual_queries=["white shirt woman crying"],
@@ -134,6 +135,7 @@ def pipeline(items, agent, verifier, config, *, retrieval_delay=0.0):
         verifier,
         FakeRefiner(),
         config=config,
+        recorder=recorder,
     )
 
 
@@ -239,12 +241,39 @@ def test_parallel_candidates_keep_provider_errors_isolated():
     assert any(item.startswith("candidate_failed:c1") for item in response.warnings)
 
 
+def test_preflight_budget_denies_candidate_inference_and_persists_attempt(tmp_path):
+    items = candidates(2)
+    agent = TrackingAgent()
+    recorder = TrajectoryRecorder(
+        tmp_path,
+        query="query",
+        command="search",
+        max_cost_usd=0.01,
+        estimated_model_call_cost_usd=0.02,
+    )
+    response = pipeline(
+        items,
+        agent,
+        FakeVerifier({}),
+        SearchConfig(candidate_parallelism=2, max_run_cost_usd=0.01),
+        recorder=recorder,
+    ).search("query", max_candidates=2)
+
+    assert agent.started == []
+    assert response.results == []
+    assert "run_cost_denied:estimated_upper_bound_exceeds_limit" in response.warnings
+    trajectory = show_history(tmp_path, recorder.run_id)["trajectory"]
+    assert any(item["event_type"] == "budget_estimated" for item in trajectory)
+    assert any(item["event_type"] == "budget_exceeded" for item in trajectory)
+
+
 @pytest.mark.parametrize(
     "kwargs, message",
     [
         ({"candidate_parallelism": 0}, "parallelism"),
         ({"early_stop_confidence": 1.1}, "confidence"),
         ({"timeout_s": 0}, "timeout"),
+        ({"max_run_cost_usd": 0}, "cost"),
     ],
 )
 def test_search_latency_controls_are_validated(kwargs, message):

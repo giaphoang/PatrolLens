@@ -4,12 +4,14 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
 import tempfile
 from dataclasses import replace
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from .adapters.asr import (
     DEFAULT_OPENROUTER_ASR_MODEL,
@@ -37,6 +39,7 @@ from .config import (
 from .evaluate import evaluate_file
 from .index import AutoVectorIndex, IndexStore, PostgresIndexStore, PostgresVectorIndex
 from .ingestion import IngestionBackends, IngestionPipeline
+from .history import TrajectoryRecorder, list_history, show_history
 from .pipeline import SearchPipeline
 from .retrieval import CoarseRetriever, GeminiQueryPlanner, HeuristicQueryPlanner
 from .temporal import LightweightTimestampRefiner, TimeLens2Adapter
@@ -45,6 +48,68 @@ from .verification import GeminiEventVerifier
 
 def _print(payload: object) -> None:
     print(json.dumps(payload, indent=2, default=str))
+
+
+def _redact_database_url(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    if "://" not in value:
+        return re.sub(
+            r"(?i)(\bpassword\s*=\s*)(?:'[^']*'|\"[^\"]*\"|\S+)",
+            r"\1***",
+            value,
+        )
+    try:
+        parsed = urlsplit(value)
+        if parsed.password is None:
+            return value
+        hostname = parsed.hostname or ""
+        if parsed.port:
+            hostname = f"{hostname}:{parsed.port}"
+        username = f"{parsed.username}:***@" if parsed.username else "***@"
+        return urlunsplit((parsed.scheme, username + hostname, parsed.path, parsed.query, parsed.fragment))
+    except ValueError:
+        return "<redacted-database-url>"
+
+
+def _history_parameters(args: argparse.Namespace) -> dict[str, object]:
+    parameters: dict[str, object] = {}
+    for key, value in vars(args).items():
+        if key in {"func", "query"}:
+            continue
+        parameters[key] = _redact_database_url(value) if key == "database_url" else value
+    return parameters
+
+
+def _recorder(args: argparse.Namespace) -> TrajectoryRecorder:
+    return TrajectoryRecorder(
+        args.index,
+        query=args.query,
+        command=args.command,
+        parameters=_history_parameters(args),
+        max_cost_usd=getattr(args, "max_run_cost_usd", None),
+        estimated_model_call_cost_usd=float(
+            os.getenv("PATROLLENS_ESTIMATED_MODEL_CALL_COST_USD", "0.02")
+        ),
+    )
+
+
+def _run_metadata(recorder: TrajectoryRecorder) -> dict[str, object]:
+    return {
+        "run_id": recorder.run_id,
+        "status": recorder.summary["status"],
+        "last_completed_stage": recorder.summary["last_completed_stage"],
+        "candidates_retrieved": recorder.summary["candidates_retrieved"],
+        "candidates_examined": recorder.summary["candidates_examined"],
+        "best_partial_result": recorder.summary["best_partial_result"],
+        "total_cost_usd": recorder.summary["total_cost_usd"],
+        "estimated_upper_bound_cost_usd": recorder.summary[
+            "estimated_upper_bound_cost_usd"
+        ],
+        "elapsed_seconds": recorder.summary["elapsed_seconds"],
+        "termination_reason": recorder.summary["termination_reason"],
+        "trajectory_path": recorder.summary["trajectory_path"],
+    }
 
 
 Store = IndexStore | PostgresIndexStore
@@ -107,16 +172,26 @@ def _vector_index(store: Store) -> VectorIndex:
     return AutoVectorIndex(store)
 
 
-def _gemini(model: str, args: argparse.Namespace) -> OpenRouterJSONClient:
+def _gemini(
+    model: str,
+    args: argparse.Namespace,
+    *,
+    recorder: TrajectoryRecorder | None = None,
+) -> OpenRouterJSONClient:
     return OpenRouterJSONClient(
         model=model,
         base_url=args.openrouter_base_url,
         http_referer=args.openrouter_http_referer,
         title=args.openrouter_title,
+        recorder=recorder,
     )
 
 
-def _embedding(args: argparse.Namespace) -> OpenRouterEmbeddingClient:
+def _embedding(
+    args: argparse.Namespace,
+    *,
+    recorder: TrajectoryRecorder | None = None,
+) -> OpenRouterEmbeddingClient:
     model = os.getenv("PATROLLENS_EMBEDDING_MODEL", DEFAULT_GEMINI_EMBEDDING_MODEL)
     query_model = os.getenv("PATROLLENS_EMBEDDING_QUERY_MODEL", model)
     return OpenRouterEmbeddingClient(
@@ -129,6 +204,7 @@ def _embedding(args: argparse.Namespace) -> OpenRouterEmbeddingClient:
         http_referer=args.openrouter_http_referer,
         title=args.openrouter_title,
         media_batch_size=getattr(args, "embedding_batch_size", 6),
+        recorder=recorder,
     )
 
 
@@ -358,15 +434,16 @@ def _build_retriever(
     store: Store,
     *,
     client: OpenRouterJSONClient | None = None,
+    recorder: TrajectoryRecorder | None = None,
 ) -> CoarseRetriever:
     if isinstance(store, PostgresIndexStore) and args.embedding_dimensions != 768:
         raise ValueError("PostgreSQL retrieval requires --embedding-dimensions 768")
     if args.planner == "gemini":
-        client = client or _gemini(args.planner_model, args)
+        client = client or _gemini(args.planner_model, args, recorder=recorder)
         planner = GeminiQueryPlanner(client, model=args.planner_model)
     else:
         planner = HeuristicQueryPlanner()
-    embedding = None if args.no_embeddings else _embedding(args)
+    embedding = None if args.no_embeddings else _embedding(args, recorder=recorder)
     audio_encoder = None if args.clap is False else _clap_backend(
         args,
         required=args.clap is True,
@@ -391,58 +468,135 @@ def _build_retriever(
         audio_encoder=audio_encoder,
         vector_index=_vector_index(store),
         config=config,
+        recorder=recorder,
     )
 
 
 def cmd_retrieve(args: argparse.Namespace) -> None:
-    with _open_store(args) as store:
-        retriever = _build_retriever(args, store)
-        _print(retriever.search_json(args.query))
+    recorder = _recorder(args)
+    try:
+        with _open_store(args) as store:
+            retriever = _build_retriever(args, store, recorder=recorder)
+            payload = retriever.search_json(args.query)
+        payload["run_id"] = recorder.run_id
+        results = payload.get("results", [])
+        recorder.finish(
+            status="completed",
+            termination_reason="retrieval_completed",
+            result=payload,
+            candidates_retrieved=len(results) if isinstance(results, list) else 0,
+            candidates_examined=0,
+            result_count=len(results) if isinstance(results, list) else 0,
+        )
+        payload["run"] = _run_metadata(recorder)
+        _print(payload)
+    except KeyboardInterrupt:
+        recorder.finish(status="cancelled", termination_reason="keyboard_interrupt")
+        _print({"run": _run_metadata(recorder)})
+        raise
+    except Exception as exc:
+        recorder.finish(status="failed", termination_reason="error", error=exc)
+        _print({"run": _run_metadata(recorder), "error": str(exc)})
+        raise
 
 
 def cmd_search(args: argparse.Namespace) -> None:
-    with _open_store(args) as store:
-        client = None if args.coarse_only and args.planner == "heuristic" else _gemini(args.model, args)
-        retriever = _build_retriever(args, store, client=client)
-        if args.coarse_only:
-            _print(retriever.search_json(args.query))
-            return
-        base_agent_config = AgentConfig.from_env(model=args.model, planner_model=args.planner_model)
-        agent_config = replace(
-            base_agent_config,
-            max_turns=args.max_turns,
-            run_root=str(store.root / "runs"),
-        )
-        assert client is not None
-        agent = ActivePerceptionAgent(
-            GeminiActivePolicy(client, model=args.model),
-            config=agent_config,
-        )
-        verifier = GeminiEventVerifier(client, model=args.model)
-        refiner = LightweightTimestampRefiner(client, model=args.model)
-        timelens = None
-        if args.timelens_command:
-            timelens = TimeLens2Adapter(
-                shlex.split(args.timelens_command),
-                acknowledge_restricted_license=args.acknowledge_timelens_license,
-                timeout_s=args.timelens_timeout,
+    recorder = _recorder(args)
+    try:
+        with _open_store(args) as store:
+            client = (
+                None
+                if args.coarse_only and args.planner == "heuristic"
+                else _gemini(args.model, args, recorder=recorder)
             )
-        pipeline = SearchPipeline(
-            store,
-            retriever,
-            agent,
-            verifier,
-            refiner,
-            timelens2=timelens,
-            config=SearchConfig(
-                candidate_parallelism=(
-                    1 if args.candidate_parallelism is None else args.candidate_parallelism
-                ),
-                early_stop_confidence=args.early_stop_confidence,
-                timeout_s=args.search_timeout_s,
+            retriever = _build_retriever(
+                args, store, client=client, recorder=recorder
+            )
+            if args.coarse_only:
+                payload = retriever.search_json(args.query)
+            else:
+                base_agent_config = AgentConfig.from_env(
+                    model=args.model, planner_model=args.planner_model
+                )
+                agent_config = replace(
+                    base_agent_config,
+                    max_turns=args.max_turns,
+                    run_root=str(store.root / "runs"),
+                )
+                assert client is not None
+                agent = ActivePerceptionAgent(
+                    GeminiActivePolicy(client, model=args.model),
+                    config=agent_config,
+                    recorder=recorder,
+                )
+                verifier = GeminiEventVerifier(client, model=args.model)
+                refiner = LightweightTimestampRefiner(client, model=args.model)
+                timelens = None
+                if args.timelens_command:
+                    timelens = TimeLens2Adapter(
+                        shlex.split(args.timelens_command),
+                        acknowledge_restricted_license=args.acknowledge_timelens_license,
+                        timeout_s=args.timelens_timeout,
+                    )
+                pipeline = SearchPipeline(
+                    store,
+                    retriever,
+                    agent,
+                    verifier,
+                    refiner,
+                    timelens2=timelens,
+                    config=SearchConfig(
+                        candidate_parallelism=(
+                            1
+                            if args.candidate_parallelism is None
+                            else args.candidate_parallelism
+                        ),
+                        early_stop_confidence=args.early_stop_confidence,
+                        timeout_s=args.search_timeout_s,
+                        max_run_cost_usd=args.max_run_cost_usd,
+                    ),
+                    recorder=recorder,
+                )
+                payload = pipeline.search(
+                    args.query, max_candidates=args.max_candidates
+                ).to_dict()
+        payload["run_id"] = recorder.run_id
+        results = payload.get("results", [])
+        result_list = results if isinstance(results, list) else []
+        best = result_list[0] if result_list else None
+        warnings = payload.get("warnings", [])
+        warning_list = warnings if isinstance(warnings, list) else []
+        if any(str(item).startswith("run_cost_denied") for item in warning_list):
+            status, reason = "denied", "estimated_cost_exceeds_budget"
+        elif recorder.budget_exceeded:
+            status, reason = "budget_exceeded", "runtime_cost_budget_reached"
+        elif any(str(item).startswith("search_timeout") for item in warning_list):
+            status, reason = "timeout", "search_timeout"
+        else:
+            status, reason = "completed", "search_completed"
+        recorder.finish(
+            status=status,
+            termination_reason=reason,
+            result=payload if status == "completed" else best,
+            best_partial_result=best,
+            candidates_examined=int(payload.get("candidates_examined", 0) or 0),
+            result_count=len(result_list),
+            best_confidence=(
+                float(best["confidence"])
+                if isinstance(best, dict) and best.get("confidence") is not None
+                else None
             ),
         )
-        _print(pipeline.search(args.query, max_candidates=args.max_candidates).to_dict())
+        payload["run"] = _run_metadata(recorder)
+        _print(payload)
+    except KeyboardInterrupt:
+        recorder.finish(status="cancelled", termination_reason="keyboard_interrupt")
+        _print({"run": _run_metadata(recorder)})
+        raise
+    except Exception as exc:
+        recorder.finish(status="failed", termination_reason="error", error=exc)
+        _print({"run": _run_metadata(recorder), "error": str(exc)})
+        raise
 
 
 def cmd_evaluate(args: argparse.Namespace) -> None:
@@ -450,6 +604,17 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         args.planner = "heuristic"
         retriever = _build_retriever(args, store)
         _print(evaluate_file(args.queries, retriever, args.top_k))
+
+
+def cmd_history(args: argparse.Namespace) -> None:
+    if args.history_action == "show":
+        if not args.run_id:
+            raise ValueError("history show requires a run_id")
+        _print(show_history(args.index, args.run_id))
+        return
+    if args.run_id:
+        raise ValueError("a run_id is only valid with 'history show'")
+    _print({"history_root": str(Path(args.index).expanduser() / "history"), "runs": list_history(args.index)})
 
 
 def cmd_doctor(_args: argparse.Namespace) -> None:
@@ -743,11 +908,30 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Global deadline covering retrieval, inspection, verification, and refinement",
     )
+    search.add_argument(
+        "--max-run-cost-usd",
+        type=float,
+        default=None,
+        help="Deny or stop candidate inference when this run-cost budget is reached",
+    )
     search.add_argument("--coarse-only", action="store_true")
     search.add_argument("--timelens-command")
     search.add_argument("--acknowledge-timelens-license", action="store_true")
     search.add_argument("--timelens-timeout", type=int, default=300)
     search.set_defaults(func=cmd_search)
+
+    history = commands.add_parser(
+        "history",
+        help="List durable search/retrieval threads or show one trajectory",
+    )
+    history.add_argument("history_action", nargs="?", choices=["show"])
+    history.add_argument("run_id", nargs="?")
+    history.add_argument(
+        "--index",
+        default=os.getenv("PATROLLENS_ARTIFACT_ROOT", ".patrol-lens"),
+        help="Artifact directory containing the history folder",
+    )
+    history.set_defaults(func=cmd_history)
 
     evaluate = commands.add_parser("evaluate", help="Evaluate coarse retrieval against JSONL intervals")
     evaluate.add_argument("queries")

@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ..config import AgentConfig
 from ..domain import (
@@ -16,6 +16,9 @@ from ..domain import (
 )
 from ..media_tools import ActionValidationError, MediaToolExecutor
 from .memory import EvidenceMemory
+
+if TYPE_CHECKING:
+    from ..history import TrajectoryRecorder
 
 
 class JSONGenerator(Protocol):
@@ -118,9 +121,16 @@ class AgentRunResult:
 
 
 class ActivePerceptionAgent:
-    def __init__(self, policy: ActivePolicy, *, config: AgentConfig | None = None) -> None:
+    def __init__(
+        self,
+        policy: ActivePolicy,
+        *,
+        config: AgentConfig | None = None,
+        recorder: TrajectoryRecorder | None = None,
+    ) -> None:
         self.policy = policy
         self.config = config or AgentConfig()
+        self.recorder = recorder
 
     @staticmethod
     def _required_direct(plan: QueryPlan) -> set[str]:
@@ -171,11 +181,43 @@ class ActivePerceptionAgent:
         for turn in range(1, self.config.max_turns + 1):
             if cancelled():
                 return cancelled_result(turn - 1)
-            decision = self.policy.decide(query, plan, candidate, memory, media_paths)
+            turn_event: str | None = None
+            if self.recorder:
+                turn_event = self.recorder.emit(
+                    "agent_turn",
+                    stage="active_perception",
+                    agent_turn=turn,
+                    status="started",
+                    input_summary={
+                        "attached_media_count": len(media_paths),
+                        "memory": memory.compact_context(),
+                    },
+                    media_references=media_paths,
+                )
+                with self.recorder.scope(
+                    stage="active_perception",
+                    parent_id=turn_event,
+                    agent_turn=turn,
+                ):
+                    decision = self.policy.decide(query, plan, candidate, memory, media_paths)
+            else:
+                decision = self.policy.decide(query, plan, candidate, memory, media_paths)
             if cancelled():
                 return cancelled_result(turn)
             memory.record_decision(decision)
             action = decision.action
+            if self.recorder:
+                self.recorder.emit(
+                    "agent_turn",
+                    stage="active_perception",
+                    parent_id=turn_event,
+                    agent_turn=turn,
+                    status="completed",
+                    output_summary={
+                        "assessment": decision.assessment,
+                        "action": action.to_dict(),
+                    },
+                )
             if action.type == "answer":
                 status = action.status or "uncertain"
                 missing_direct = required_direct - memory.direct_modalities()
@@ -207,12 +249,55 @@ class ActivePerceptionAgent:
                 media_paths = []
                 continue
             try:
+                action_event: str | None = None
+                if self.recorder:
+                    action_event = self.recorder.emit(
+                        "media_action",
+                        stage="active_perception",
+                        parent_id=turn_event,
+                        agent_turn=turn,
+                        status="started",
+                        input_summary=action.to_dict(),
+                    )
                 observation = executor.execute(action)
             except ActionValidationError as exc:
+                if self.recorder:
+                    self.recorder.emit(
+                        "media_action",
+                        stage="active_perception",
+                        parent_id=turn_event,
+                        agent_turn=turn,
+                        status="rejected",
+                        error={"type": type(exc).__name__, "message": str(exc)},
+                    )
                 memory.add_note(f"Invalid action rejected: {exc}")
                 media_paths = []
                 continue
+            except Exception as exc:
+                if self.recorder:
+                    self.recorder.emit(
+                        "media_action",
+                        stage="active_perception",
+                        parent_id=action_event,
+                        agent_turn=turn,
+                        status="failed",
+                        error={"type": type(exc).__name__, "message": str(exc)},
+                    )
+                raise
             memory.add_observation(observation)
+            if self.recorder:
+                self.recorder.emit(
+                    "media_action",
+                    stage="active_perception",
+                    parent_id=action_event,
+                    agent_turn=turn,
+                    status="completed",
+                    output_summary={
+                        "tool": action.type,
+                        "observation": observation.to_dict(),
+                    },
+                    media_references=observation.media_paths,
+                )
             if cancelled():
                 return cancelled_result(turn)
             media_paths = observation.media_paths

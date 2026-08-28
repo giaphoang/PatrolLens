@@ -64,11 +64,12 @@ class AgentConfig:
 
 @dataclass(frozen=True)
 class SearchConfig:
-    """Optional latency controls for full candidate verification."""
+    """Optional latency and cost controls for full candidate verification."""
 
     candidate_parallelism: int = 1
     early_stop_confidence: float | None = None
     timeout_s: float | None = None
+    max_run_cost_usd: float | None = None
 
     def __post_init__(self) -> None:
         if self.candidate_parallelism <= 0:
@@ -77,6 +78,8 @@ class SearchConfig:
             raise ValueError("early-stop confidence must be between 0 and 1")
         if self.timeout_s is not None and self.timeout_s <= 0:
             raise ValueError("search timeout must be positive")
+        if self.max_run_cost_usd is not None and self.max_run_cost_usd <= 0:
+            raise ValueError("maximum run cost must be positive")
 
 
 @dataclass(frozen=True)

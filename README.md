@@ -190,6 +190,8 @@ patrol-lens ingest videos_corpus --index .patrol-lens-smoke --profile metadata
 
 Ingestion is fingerprinted and restartable. Re-run the same command against the same `--index` to continue: completed videos are skipped, while failed or incomplete videos are retried. Each provider response is validated, saved immediately in a content-hash cache, and then attached to evidence in small committed batches. A retry reuses cached vectors instead of paying to embed completed items again. Do not use `--force` when continuing. Changing the embedding model, dimensions, or extraction settings creates a new fingerprint; use `--force` only for an intentional evidence rebuild (cached vectors are still reused when their full cache key matches).
 
+Each per-video ingestion report includes `latency_seconds` and `peak_rss_mb`. The latency covers `ingest_asset`; `peak_rss_mb` is the process high-water resident memory reported by the standard library, so it is cumulative when one CLI process ingests multiple videos and may be `null` on unsupported platforms.
+
 When CLAP is first enabled on an existing completed corpus, ingestion performs
 an additive CLAP-only backfill. Existing transcripts, visual vectors, and
 evidence are preserved. Every 10-second audio vector is checkpointed before the
@@ -287,7 +289,8 @@ patrol-lens search \
   --max-turns 2 \
   --candidate-parallelism 4 \
   --early-stop-confidence 0.90 \
-  --search-timeout-s 300
+  --search-timeout-s 300 \
+  --max-run-cost-usd 1.00
 ```
 
 Candidate workers are bounded; each worker retains its own sequential active-
@@ -296,8 +299,32 @@ early-stop threshold claims a single thread-safe winner, prevents new
 candidate work, and proceeds to refinement. The global deadline includes
 retrieval, inspection, verification, and refinement. At timeout, PatrolLens
 returns the best supported result already obtained, or an empty result with a
-`search_timeout_no_supported_result` warning. Omitting all three controls keeps
+`search_timeout_no_supported_result` warning. Before candidate inference, the
+cost guard records a conservative upper-bound estimate. It denies work that
+already exceeds the configured budget, then tracks provider usage after every
+OpenRouter response and cancels pending candidates when the runtime limit is
+reached. Omitting all four controls keeps
 the original sequential, unbounded behavior.
+
+Every `search` and `retrieve` command creates a durable run thread under:
+
+```text
+INDEX/history/RUN_ID/trajectory.jsonl
+INDEX/history/RUN_ID/summary.json
+```
+
+The versioned JSONL trajectory is appended and flushed throughout planning,
+retrieval, candidate inspection, media actions, model calls, verification, and
+refinement. Parallel candidates retain independent `candidate_id` branches.
+Media is referenced by path and is never copied into history. `summary.json`
+retains the best partial result, completed stage, elapsed time, usage/cost, and
+termination reason even after timeout, budget cancellation, provider failure,
+or Ctrl+C. The CLI result includes its `run_id` and trajectory path.
+
+```bash
+patrol-lens history --index .patrol-lens-artifacts
+patrol-lens history show RUN_ID --index .patrol-lens-artifacts
+```
 
 Other examples:
 

@@ -254,6 +254,41 @@ flight. Candidate-specific failures remain warnings and do not terminate other
 workers. These controls are opt-in; their omitted defaults preserve sequential
 search with no early stop or global deadline.
 
+### Durable run trajectories and budgets
+
+Every search and retrieval invocation is a persistent thread. A centralized,
+thread-safe recorder appends versioned events to
+`INDEX/history/RUN_ID/trajectory.jsonl`, atomically refreshes `summary.json`,
+and appends lightweight snapshots to `INDEX/history/index.jsonl`. The event
+graph uses explicit parent and candidate IDs, so concurrent candidate branches
+do not depend on JSONL ordering.
+
+```mermaid
+flowchart TD
+    RUN["run_started"] --> PLAN["planner events"]
+    PLAN --> RET["retrieval events"]
+    RET --> C1["candidate branch 1"]
+    RET --> C2["candidate branch 2"]
+    C1 --> TURN["agent turns + media actions"]
+    C2 --> TURN2["agent turns + media actions"]
+    TURN --> VERIFY["verification + refinement"]
+    TURN2 --> VERIFY
+    API["OpenRouter responses"] --> COST["tokens + actual/fallback cost"]
+    COST --> STOP{"time/cost limit?"}
+    STOP -->|yes| PARTIAL["persist best partial + cancel pending"]
+    VERIFY --> FINAL["terminal event + summary"]
+    PARTIAL --> FINAL
+```
+
+Model requests store summaries and media paths, never inline bytes. Provider
+usage is normalized after each response; if the provider omits cost, the
+configured conservative per-call estimate is used for accounting. Before
+candidate inference, the pipeline estimates `(candidate count × maximum model
+calls per candidate)` plus retrieval spend. A limit breach prevents future
+work but cannot roll back trajectory events or completed supported evidence.
+The global history index allows `patrol-lens history` to list threads without
+replaying all trajectory files.
+
 ## 4. Semantic verification
 
 The active controller proposes an answer. A separate Gemini call is the final semantic gate.
@@ -297,7 +332,15 @@ flowchart LR
     G --> T["Refined [start,end]"]
 ```
 
-The deterministic audio onset is only a boundary hint; it cannot establish shouting or speaker identity. Gemini uses the already-verified event semantics to choose the first and last supporting instants.
+The deterministic audio onset is only a boundary hint; it cannot establish shouting or speaker identity. Gemini uses the already-verified event semantics to choose the first and last supporting instants. The implementation expands the verified interval by up to `context_ms=7 s`, clamps that context to the candidate, and caps the media window at 20 s. It performs two new local FFmpeg extractions: a 6 FPS H.264/AAC clip and a separate mono 16 kHz PCM WAV; it does not reuse decoded media from verification.
+
+### Design choice and observed tradeoff
+
+Keep refinement verifier-gated and boundary-focused. It is valuable for onset/offset queries or broad verified intervals, but it cannot recover a missed event and is not needed to establish semantic event correctness. In bounded search it runs on the claimed winner; in the default sequential path, each supported candidate may reach refinement. A cheap policy gate should skip it for event-only queries or intervals already within the required temporal tolerance.
+
+The inspected reference run is an operational check, not an accuracy benchmark: refinement started with `[86,000, 91,000]`, generated `[85,000, 98,000]` of context, returned the unchanged `[86,000, 91,000]` interval, and found no deterministic onset cue. The refinement phase took 10.423 s end to end; its Gemini request took 10.103 s, used 2,233 reported tokens, and cost $0.00153787. These measurements do not support fixed assumptions such as +2–4 s, 100–300 tokens, or $0.0001–$0.0005 per call.
+
+The step can improve endpoint error without changing retrieval recall, but a successful model response can still over-refine within the allowed context; clamping prevents out-of-window output, not an incorrect boundary. Exceptions retain the verified interval with a warning. Therefore, do not claim a universal temporal-IoU gain (such as 5–15%) until a held-out, annotated comparison of verifier-only versus gated refinement reports temporal IoU, absolute boundary error, no-op/fallback rate, p95 latency, and provider cost.
 
 ## 6. Optional TimeLens2 boundary
 
@@ -380,6 +423,7 @@ No upstream source is vendored. Exact inspected commits and licensing notes are 
 - Gemini planner failure: fall back to deterministic planning.
 - Invalid/repeated/out-of-range agent action: reject it, record a controller note, and continue within the turn budget.
 - Candidate-specific media/API failure: record a warning and continue to the next candidate.
+- Timeout, budget exhaustion, provider failure, or Ctrl+C: flush the run trajectory and retain the best partial result, cumulative cost, elapsed time, and last completed stage.
 - Verifier rejection/uncertainty: do not emit a result.
 - Refinement failure: retain the verified interval with a warning.
 - TimeLens2 failure: retain lightweight grounding with a warning.
@@ -396,4 +440,4 @@ Evaluate the stages separately so a strong verifier cannot hide retrieval misses
 5. ASR word error rate on bodycam acoustics.
 6. Cost, media seconds sent to Gemini, and active turns/query.
 
-The TimeLens2 activation decision should be data-driven: add it only when the verifier consistently finds the right event but lightweight refinement produces unnecessarily broad intervals, high boundary error, or low temporal IoU.
+The TimeLens2 activation decision should be data-driven: add it only when the verifier consistently finds the right event but gated lightweight refinement produces unnecessarily broad intervals, high boundary error, or low temporal IoU. The same evaluation must include the added latency, provider cost, media extraction time, and fallback/no-op rate.
