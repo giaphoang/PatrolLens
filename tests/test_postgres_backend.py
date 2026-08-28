@@ -6,7 +6,7 @@ import pytest
 
 from patrol_lens.cli import build_parser
 from patrol_lens.index import POSTGRES_SCHEMA, PostgresIndexStore, PostgresVectorIndex
-from patrol_lens.index.postgres_store import _hash_vector, _vector_literal
+from patrol_lens.index.postgres_store import _hash_vector, _json_value, _vector_literal
 
 
 def test_postgres_schema_contains_traceability_columns_and_guards():
@@ -44,6 +44,12 @@ def test_vector_literals_are_finite_and_hashable():
     assert len(_hash_vector([1, 0.25, -2])) == 64
     with pytest.raises(ValueError, match="finite"):
         _vector_literal([float("nan")])
+
+
+def test_postgres_json_values_do_not_double_decode_scalar_strings():
+    assert _json_value("3.0.0") == "3.0.0"
+    assert _json_value('{"dimensions": 768}') == {"dimensions": 768}
+    assert _json_value('["visual", "transcript"]') == ["visual", "transcript"]
 
 
 def test_postgres_backend_requires_database_url(monkeypatch, tmp_path):

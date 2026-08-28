@@ -226,6 +226,34 @@ The controller is independently implemented from OmniAgent's research environmen
 
 Each action, observation path, compact assessment, retrieved item, and controller warning is atomically persisted to `INDEX/runs/RUN_ID/memory.json`. Raw media does not accumulate in the prompt; compact evidence memory does.
 
+### Bounded candidate scheduling
+
+```mermaid
+flowchart LR
+    K["Top-K retrieval candidates"] --> Q["Bounded candidate queue"]
+    Q --> W1["Worker 1<br/>sequential agent turns"]
+    Q --> W2["Worker 2<br/>sequential agent turns"]
+    Q --> WN["Worker N<br/>sequential agent turns"]
+    W1 --> G["Independent verification"]
+    W2 --> G
+    WN --> G
+    G --> E{"Supported + confidence threshold<br/>+ direct modalities satisfied?"}
+    E -->|yes| STOP["Claim winner + cancel pending work"]
+    STOP --> R["Refine winner"]
+    E -->|no| Q
+    DEADLINE["Global search deadline"] --> STOP
+```
+
+`candidate_parallelism` bounds concurrent candidates without parallelizing an
+individual candidate's agent turns. `early_stop_confidence` is applied only to
+verifier-supported evidence whose required visual/audio modalities were
+directly inspected. `timeout_s` starts before retrieval. Completed supported
+verification is retained as a provisional fallback, so timeout returns the
+best supported evidence available even if its refinement call is still in
+flight. Candidate-specific failures remain warnings and do not terminate other
+workers. These controls are opt-in; their omitted defaults preserve sequential
+search with no early stop or global deadline.
+
 ## 4. Semantic verification
 
 The active controller proposes an answer. A separate Gemini call is the final semantic gate.

@@ -63,6 +63,23 @@ class AgentConfig:
 
 
 @dataclass(frozen=True)
+class SearchConfig:
+    """Optional latency controls for full candidate verification."""
+
+    candidate_parallelism: int = 1
+    early_stop_confidence: float | None = None
+    timeout_s: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.candidate_parallelism <= 0:
+            raise ValueError("candidate parallelism must be positive")
+        if self.early_stop_confidence is not None and not 0 <= self.early_stop_confidence <= 1:
+            raise ValueError("early-stop confidence must be between 0 and 1")
+        if self.timeout_s is not None and self.timeout_s <= 0:
+            raise ValueError("search timeout must be positive")
+
+
+@dataclass(frozen=True)
 class RefinementConfig:
     context_ms: int = 7_000
     frame_fps: float = 6.0

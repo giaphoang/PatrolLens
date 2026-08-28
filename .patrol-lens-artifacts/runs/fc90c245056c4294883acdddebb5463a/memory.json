@@ -1,0 +1,265 @@
+{
+  "run_id": "fc90c245056c4294883acdddebb5463a",
+  "query": "Find the moment the white shirt woman starts crying",
+  "query_plan": {
+    "original_text": "Find the moment the white shirt woman starts crying",
+    "visual_queries": [
+      "woman wearing a white shirt",
+      "woman crying",
+      "woman with tears on face"
+    ],
+    "transcript_queries": [],
+    "ocr_queries": [],
+    "audio_queries": [
+      "sobbing",
+      "crying sounds"
+    ],
+    "required_modalities": [
+      "visual",
+      "audio_event"
+    ],
+    "modality_weights": {
+      "visual": 0.7,
+      "transcript": 0.1,
+      "ocr": 0.1,
+      "audio_event": 0.3
+    },
+    "relation": "overlap",
+    "relation_tolerance_ms": 500,
+    "target": "woman crying",
+    "constraints": {
+      "all_instances": false,
+      "nighttime": false,
+      "speaker_attribution": false
+    },
+    "target_boundary": "onset",
+    "requires_video_verification": true
+  },
+  "candidate": {
+    "id": "candidate-2f25932f0342",
+    "video_id": "video-7e73586a9abc86ae",
+    "start_ms": 210000,
+    "end_ms": 245000,
+    "start_s": 210.0,
+    "end_s": 245.0,
+    "score": 0.040169575426343265,
+    "evidence": [
+      {
+        "id": "video-7e73586a9abc86ae-clap-0000215000",
+        "video_id": "video-7e73586a9abc86ae",
+        "start_ms": 215000,
+        "end_ms": 225000,
+        "modality": "audio_event",
+        "content": "CLAP acoustic window from 215.000s to 225.000s",
+        "confidence": 1.0,
+        "source": "atan2f/larger_clap_general_coreml",
+        "segment_id": "video-7e73586a9abc86ae-coarse-000026",
+        "metadata": {
+          "cache_key": "b6376acf82e4db1b5598e0e1290d01dd739b8fdf7fa49a529368cec7be21d8e7",
+          "stride_ms": 5000,
+          "window_ms": 10000,
+          "sample_rate": 48000,
+          "source_hash": "7e73586a9abc86ae23432b752fd08d0417f61626ddf8dbe5258934667f8ca71a",
+          "content_hash": "7f5f59205b1b062dba9d207b6e0c2835b51aa04bace3786c499e34d68668f14d",
+          "padded_samples": 0,
+          "source_reference": "/Users/zap/Documents/PatrolLens/compressed_video_corpus/Take Home Video 1.mp4",
+          "processing_version": "3.0.0",
+          "preprocessing_version": "coreml-int8-48khz-mono-peaknorm-v1:10000:5000",
+          "embedding_input": "raw_audio",
+          "embedding_dimensions": 512,
+          "source_uri": "/Users/zap/Documents/PatrolLens/compressed_video_corpus/Take Home Video 1.mp4",
+          "embedding_id": "video-7e73586a9abc86ae-clap-0000215000-embedding",
+          "model_version": "atan2f/larger_clap_general_coreml",
+          "evidence_hash": "31c7fd926dc7e863c1f1703489a106f43dc85a46a1fe6412376a7de3fd244475",
+          "source_sha256": "7e73586a9abc86ae23432b752fd08d0417f61626ddf8dbe5258934667f8ca71a",
+          "embedding_hash": "0bce6a1329bf1857cb03953675e89e284e223b42724a8b4001e859da3a88c183"
+        }
+      },
+      {
+        "id": "video-7e73586a9abc86ae-visual-image-0000223000",
+        "video_id": "video-7e73586a9abc86ae",
+        "start_ms": 223000,
+        "end_ms": 224000,
+        "modality": "visual",
+        "content": "canonical body-camera keyframe covering 223.000s to 224.000s",
+        "confidence": 1.0,
+        "source": "google/gemini-embedding-2",
+        "segment_id": "video-7e73586a9abc86ae-coarse-000027",
+        "metadata": {
+          "media_kind": "image",
+          "media_path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000224.jpg",
+          "source_hash": "ca53b3ea011cf05a90d426d4b8b2b9f4ba9c49a0dc55a3814fa0396afe4ef082",
+          "sample_count": 1,
+          "perceptual_hash": "52d2bdeccdcb9d9e282521",
+          "source_reference": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000224.jpg",
+          "processing_version": "3.0.0",
+          "canonical_timestamp_ms": 223000,
+          "api_model": "google/gemini-embedding-2",
+          "cache_key": "035fe3c86a359af54891e3375bd7b104badb2ffa5bcef71dc75ea2bab688171d",
+          "content_hash": "ca53b3ea011cf05a90d426d4b8b2b9f4ba9c49a0dc55a3814fa0396afe4ef082",
+          "embedding_input": "image",
+          "embedding_dimensions": 768,
+          "preprocessing_version": "scene-keyframe-v1:image",
+          "source_uri": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000224.jpg",
+          "embedding_id": "video-7e73586a9abc86ae-visual-image-0000223000-embedding",
+          "model_version": "google/gemini-embedding-2",
+          "evidence_hash": "e40134c15cc805fa7875be70a0aae7e9bac22f116ddf0ca950136bd8c222c8ea",
+          "source_sha256": "7e73586a9abc86ae23432b752fd08d0417f61626ddf8dbe5258934667f8ca71a",
+          "embedding_hash": "fe544ba60097cb1cf378bd04cb00d7581f4c653e278c78925e0c798646774af4"
+        }
+      },
+      {
+        "id": "video-7e73586a9abc86ae-visual-image-0000225000",
+        "video_id": "video-7e73586a9abc86ae",
+        "start_ms": 225000,
+        "end_ms": 226000,
+        "modality": "visual",
+        "content": "canonical body-camera keyframe covering 225.000s to 226.000s",
+        "confidence": 1.0,
+        "source": "google/gemini-embedding-2",
+        "segment_id": "video-7e73586a9abc86ae-coarse-000028",
+        "metadata": {
+          "media_kind": "image",
+          "media_path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000226.jpg",
+          "source_hash": "b9da9c1ce3c7eaf0e0ab9d93f8db43896bff88f61a6235c460a765fc9c775992",
+          "sample_count": 1,
+          "perceptual_hash": "7266765667646f4f2b2823",
+          "source_reference": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000226.jpg",
+          "processing_version": "3.0.0",
+          "canonical_timestamp_ms": 225000,
+          "api_model": "google/gemini-embedding-2",
+          "cache_key": "c7de96aa4eefda74140a6c8e16cc449fa7a57770d2ef534793dd87f597681a78",
+          "content_hash": "b9da9c1ce3c7eaf0e0ab9d93f8db43896bff88f61a6235c460a765fc9c775992",
+          "embedding_input": "image",
+          "embedding_dimensions": 768,
+          "preprocessing_version": "scene-keyframe-v1:image",
+          "source_uri": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000226.jpg",
+          "embedding_id": "video-7e73586a9abc86ae-visual-image-0000225000-embedding",
+          "model_version": "google/gemini-embedding-2",
+          "evidence_hash": "d80e895afaeb59503c4096e416e011360b9fee1b22bc12e953d7e991689e4581",
+          "source_sha256": "7e73586a9abc86ae23432b752fd08d0417f61626ddf8dbe5258934667f8ca71a",
+          "embedding_hash": "002d3af9eefc4eef08d451dad8c1611583b9517b39adf06ce83ed3e2880d41cd"
+        }
+      },
+      {
+        "id": "video-7e73586a9abc86ae-clap-0000230000",
+        "video_id": "video-7e73586a9abc86ae",
+        "start_ms": 230000,
+        "end_ms": 240000,
+        "modality": "audio_event",
+        "content": "CLAP acoustic window from 230.000s to 240.000s",
+        "confidence": 1.0,
+        "source": "atan2f/larger_clap_general_coreml",
+        "segment_id": "video-7e73586a9abc86ae-coarse-000028",
+        "metadata": {
+          "cache_key": "17cd6b8279f2b071cf22a970d2737a2f4b780ed27ea573038f03a045d6c34ab7",
+          "stride_ms": 5000,
+          "window_ms": 10000,
+          "sample_rate": 48000,
+          "source_hash": "7e73586a9abc86ae23432b752fd08d0417f61626ddf8dbe5258934667f8ca71a",
+          "content_hash": "0c63d4ad50fd36b1a1526c229b49b8f81b8311a73ec5092b0d3d2dddcf8fbb81",
+          "padded_samples": 0,
+          "source_reference": "/Users/zap/Documents/PatrolLens/compressed_video_corpus/Take Home Video 1.mp4",
+          "processing_version": "3.0.0",
+          "preprocessing_version": "coreml-int8-48khz-mono-peaknorm-v1:10000:5000",
+          "embedding_input": "raw_audio",
+          "embedding_dimensions": 512,
+          "source_uri": "/Users/zap/Documents/PatrolLens/compressed_video_corpus/Take Home Video 1.mp4",
+          "embedding_id": "video-7e73586a9abc86ae-clap-0000230000-embedding",
+          "model_version": "atan2f/larger_clap_general_coreml",
+          "evidence_hash": "ecc15653011270b0eab710c2e3921d5dc81a317cda4b23b93eed56a39daa2717",
+          "source_sha256": "7e73586a9abc86ae23432b752fd08d0417f61626ddf8dbe5258934667f8ca71a",
+          "embedding_hash": "b8b5eaa73dc440e63086fca5490b2fc5fadc05fc82ce94680296d007f7e7db88"
+        }
+      }
+    ],
+    "branch_scores": {
+      "audio_event:0:clap": 0.004838709677419355,
+      "audio_event:1:clap": 0.0046875,
+      "visual:0": 0.009333333333333332,
+      "visual:1": 0.006481481481481481,
+      "visual:2": 0.00958904109589041
+    },
+    "covered_modalities": [
+      "audio_event",
+      "visual"
+    ],
+    "missing_modalities": [],
+    "metadata": {
+      "relation": "overlap",
+      "seed_evidence_id": "video-7e73586a9abc86ae-clap-0000220000"
+    }
+  },
+  "observations": [
+    {
+      "id": "turn-02",
+      "action": {
+        "type": "get_frames",
+        "start_ms": 220000,
+        "end_ms": 235000,
+        "fps": 0.5,
+        "num_frames": 8,
+        "answer": null,
+        "status": null,
+        "confidence": null
+      },
+      "start_ms": 220000,
+      "end_ms": 235000,
+      "media_paths": [
+        "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/runs/fc90c245056c4294883acdddebb5463a/turn-02-frame-000-220000.jpg",
+        "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/runs/fc90c245056c4294883acdddebb5463a/turn-02-frame-001-222143.jpg",
+        "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/runs/fc90c245056c4294883acdddebb5463a/turn-02-frame-002-224286.jpg",
+        "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/runs/fc90c245056c4294883acdddebb5463a/turn-02-frame-003-226429.jpg",
+        "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/runs/fc90c245056c4294883acdddebb5463a/turn-02-frame-004-228571.jpg",
+        "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/runs/fc90c245056c4294883acdddebb5463a/turn-02-frame-005-230714.jpg",
+        "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/runs/fc90c245056c4294883acdddebb5463a/turn-02-frame-006-232857.jpg",
+        "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/runs/fc90c245056c4294883acdddebb5463a/turn-02-frame-007-235000.jpg"
+      ],
+      "summary": "",
+      "metadata": {
+        "timestamps_ms": [
+          220000,
+          222143,
+          224286,
+          226429,
+          228571,
+          230714,
+          232857,
+          235000
+        ],
+        "modality": "visual"
+      }
+    }
+  ],
+  "decisions": [
+    {
+      "assessment": "The current evidence includes audio and visual keyframes, but the specific onset of the woman in the white shirt crying has not been visually confirmed or precisely timestamped within the 210000-245000ms range.",
+      "action": {
+        "type": "get_frames",
+        "start_ms": 220000,
+        "end_ms": 235000,
+        "fps": 1.0,
+        "num_frames": 15,
+        "answer": null,
+        "status": null,
+        "confidence": null
+      }
+    },
+    {
+      "assessment": "The visual and audio evidence between 215s and 240s needs to be examined to identify the specific onset of the woman in the white shirt crying.",
+      "action": {
+        "type": "get_frames",
+        "start_ms": 220000,
+        "end_ms": 235000,
+        "fps": 0.5,
+        "num_frames": 8,
+        "answer": null,
+        "status": null,
+        "confidence": null
+      }
+    }
+  ],
+  "notes": [
+    "Invalid action rejected: get_frames num_frames must be 1..12"
+  ]
+}

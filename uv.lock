@@ -1095,6 +1095,7 @@ source = { editable = "." }
 dependencies = [
     { name = "pillow" },
     { name = "python-dotenv" },
+    { name = "torch" },
 ]
 
 [package.optional-dependencies]
@@ -1168,6 +1169,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "torch", specifier = ">=2.13.0" },
     { name = "torch", marker = "extra == 'vision'", specifier = ">=2.2" },
     { name = "transformers", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'full'", specifier = ">=4.45" },
     { name = "transformers", marker = "extra == 'clap-macos'", specifier = ">=4.45" },

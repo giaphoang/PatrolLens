@@ -271,6 +271,34 @@ patrol-lens search \
   --model google/gemini-3.1-pro-preview
 ```
 
+For latency-bounded interactive search, keep retrieval breadth while bounding
+candidate verification:
+
+```bash
+patrol-lens search \
+  "Find the moment the white shirt woman starts crying" \
+  --backend postgres \
+  --database-url "$PATROLLENS_DATABASE_URL" \
+  --index .patrol-lens-artifacts \
+  --planner gemini \
+  --planner-model google/gemini-3.1-flash-lite \
+  --model google/gemini-3.7-flash \
+  --max-candidates 10 \
+  --max-turns 2 \
+  --candidate-parallelism 4 \
+  --early-stop-confidence 0.90 \
+  --search-timeout-s 300
+```
+
+Candidate workers are bounded; each worker retains its own sequential active-
+perception turn loop. A directly grounded supported result at or above the
+early-stop threshold claims a single thread-safe winner, prevents new
+candidate work, and proceeds to refinement. The global deadline includes
+retrieval, inspection, verification, and refinement. At timeout, PatrolLens
+returns the best supported result already obtained, or an empty result with a
+`search_timeout_no_supported_result` warning. Omitting all three controls keeps
+the original sequential, unbounded behavior.
+
 Other examples:
 
 ```bash

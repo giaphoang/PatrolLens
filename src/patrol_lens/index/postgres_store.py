@@ -18,10 +18,22 @@ class PostgresTraceabilityError(RuntimeError):
 
 
 def _json_value(value: Any, default: Any = None) -> Any:
+    """Normalize JSON values without decoding psycopg's scalar strings twice.
+
+    Psycopg already converts JSONB into Python values. In particular, a JSON
+    string such as the index version arrives as ``"3.0.0"`` at the Python
+    level, where a second ``json.loads`` would incorrectly parse it as a JSON
+    number followed by extra data. Object/array strings are still accepted for
+    lightweight test doubles and nonstandard drivers.
+    """
+
     if value is None:
         return default
     if isinstance(value, str):
-        return json.loads(value)
+        stripped = value.strip()
+        if stripped.startswith(("{", "[")):
+            return json.loads(stripped)
+        return value
     return value
 
 

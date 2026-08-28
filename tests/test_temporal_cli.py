@@ -30,6 +30,18 @@ def test_cli_exposes_new_lifecycle():
     search = parser.parse_args(["search", "Miranda rights"])
     assert search.model == "google/gemini-3.1-pro-preview"
     assert search.openrouter_base_url == "https://openrouter.ai/api/v1"
+    assert search.candidate_parallelism is None
+    assert search.early_stop_confidence is None
+    assert search.search_timeout_s is None
+    bounded = parser.parse_args(
+        [
+            "search", "crying", "--candidate-parallelism", "4",
+            "--early-stop-confidence", "0.90", "--search-timeout-s", "300",
+        ]
+    )
+    assert bounded.candidate_parallelism == 4
+    assert bounded.early_stop_confidence == 0.9
+    assert bounded.search_timeout_s == 300
     assert parser.parse_args(["doctor"]).command == "doctor"
 
 

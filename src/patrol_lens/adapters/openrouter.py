@@ -5,6 +5,7 @@ import json
 import math
 import mimetypes
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -85,20 +86,25 @@ class OpenRouterJSONClient:
         self.timeout_s = timeout_s
         self.max_inline_media_bytes = max_inline_media_bytes
         self._client: Any = None
+        self._client_lock = threading.Lock()
         if not self.api_key:
             raise RuntimeError("OPENROUTER_API_KEY is required for Gemini reasoning through OpenRouter")
 
     def _load(self) -> Any:
         if self._client is None:
-            try:
-                from openai import OpenAI
-            except ImportError as exc:
-                raise RuntimeError("openai is not installed; install patrol-lens[openrouter]") from exc
-            self._client = OpenAI(
-                api_key=self.api_key,
-                base_url=self.base_url,
-                timeout=self.timeout_s,
-            )
+            with self._client_lock:
+                if self._client is None:
+                    try:
+                        from openai import OpenAI
+                    except ImportError as exc:
+                        raise RuntimeError(
+                            "openai is not installed; install patrol-lens[openrouter]"
+                        ) from exc
+                    self._client = OpenAI(
+                        api_key=self.api_key,
+                        base_url=self.base_url,
+                        timeout=self.timeout_s,
+                    )
         return self._client
 
     @staticmethod

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -137,13 +139,41 @@ class ActivePerceptionAgent:
         plan: QueryPlan,
         candidate: CandidateInterval,
         asset: VideoAsset,
+        *,
+        cancel_event: threading.Event | None = None,
+        deadline: float | None = None,
     ) -> AgentRunResult:
         memory = EvidenceMemory(query, plan, candidate, self.config.run_root)
         executor = MediaToolExecutor(asset, candidate, memory.run_dir, config=self.config)
         media_paths: list[str] = []
         required_direct = self._required_direct(plan)
+
+        def cancelled() -> bool:
+            return bool(
+                (cancel_event is not None and cancel_event.is_set())
+                or (deadline is not None and time.monotonic() >= deadline)
+            )
+
+        def cancelled_result(turns: int) -> AgentRunResult:
+            return AgentRunResult(
+                AgentConclusion(
+                    status="uncertain",
+                    description="Active perception cancelled by the search latency limit",
+                    start_ms=candidate.start_ms,
+                    end_ms=candidate.end_ms,
+                    confidence=0.0,
+                    missing_evidence=sorted(required_direct - memory.direct_modalities()),
+                ),
+                memory,
+                turns,
+            )
+
         for turn in range(1, self.config.max_turns + 1):
+            if cancelled():
+                return cancelled_result(turn - 1)
             decision = self.policy.decide(query, plan, candidate, memory, media_paths)
+            if cancelled():
+                return cancelled_result(turn)
             memory.record_decision(decision)
             action = decision.action
             if action.type == "answer":
@@ -183,6 +213,8 @@ class ActivePerceptionAgent:
                 media_paths = []
                 continue
             memory.add_observation(observation)
+            if cancelled():
+                return cancelled_result(turn)
             media_paths = observation.media_paths
 
         return AgentRunResult(

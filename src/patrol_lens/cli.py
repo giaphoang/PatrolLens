@@ -32,6 +32,7 @@ from .config import (
     AgentConfig,
     IngestionConfig,
     RetrievalConfig,
+    SearchConfig,
 )
 from .evaluate import evaluate_file
 from .index import AutoVectorIndex, IndexStore, PostgresIndexStore, PostgresVectorIndex
@@ -433,6 +434,13 @@ def cmd_search(args: argparse.Namespace) -> None:
             verifier,
             refiner,
             timelens2=timelens,
+            config=SearchConfig(
+                candidate_parallelism=(
+                    1 if args.candidate_parallelism is None else args.candidate_parallelism
+                ),
+                early_stop_confidence=args.early_stop_confidence,
+                timeout_s=args.search_timeout_s,
+            ),
         )
         _print(pipeline.search(args.query, max_candidates=args.max_candidates).to_dict())
 
@@ -717,6 +725,24 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--model", default=os.getenv("PATROLLENS_GEMINI_MODEL", DEFAULT_GEMINI_MODEL))
     search.add_argument("--max-candidates", type=int, default=12)
     search.add_argument("--max-turns", type=int, default=5)
+    search.add_argument(
+        "--candidate-parallelism",
+        type=int,
+        default=None,
+        help="Maximum candidates inspected concurrently; omitted keeps sequential search",
+    )
+    search.add_argument(
+        "--early-stop-confidence",
+        type=float,
+        default=None,
+        help="Stop after directly grounded supported evidence reaches this confidence",
+    )
+    search.add_argument(
+        "--search-timeout-s",
+        type=float,
+        default=None,
+        help="Global deadline covering retrieval, inspection, verification, and refinement",
+    )
     search.add_argument("--coarse-only", action="store_true")
     search.add_argument("--timelens-command")
     search.add_argument("--acknowledge-timelens-license", action="store_true")

@@ -1,0 +1,2305 @@
+{
+  "video_sha256": "7e73586a9abc86ae23432b752fd08d0417f61626ddf8dbe5258934667f8ca71a",
+  "frame_step_ms": 1000,
+  "duplicate_distance": 8,
+  "scene_change_distance": 18,
+  "sampled_frame_count": 316,
+  "keyframes": [
+    {
+      "timestamp_ms": 0,
+      "start_ms": 0,
+      "end_ms": 2000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000001.jpg",
+      "perceptual_hash": "121205a4c6e6a7a7231f19",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 2000,
+      "start_ms": 2000,
+      "end_ms": 3000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000003.jpg",
+      "perceptual_hash": "121725a5cce5a7a7221e18",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 3000,
+      "start_ms": 3000,
+      "end_ms": 4000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000004.jpg",
+      "perceptual_hash": "121725adcce427a71f1c15",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 4000,
+      "start_ms": 4000,
+      "end_ms": 5000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000005.jpg",
+      "perceptual_hash": "12123284446693d71e1b16",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 5000,
+      "start_ms": 5000,
+      "end_ms": 6000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000006.jpg",
+      "perceptual_hash": "121765a5ccec27a71c1913",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 6000,
+      "start_ms": 6000,
+      "end_ms": 7000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000007.jpg",
+      "perceptual_hash": "120a129252727393201b18",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 7000,
+      "start_ms": 7000,
+      "end_ms": 8000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000008.jpg",
+      "perceptual_hash": "121215a5c4e5a7a71d1816",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 8000,
+      "start_ms": 8000,
+      "end_ms": 9000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000009.jpg",
+      "perceptual_hash": "121225a444e5a7e7221d1a",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 9000,
+      "start_ms": 9000,
+      "end_ms": 10000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000010.jpg",
+      "perceptual_hash": "121321accce5a7e71f1b18",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 10000,
+      "start_ms": 10000,
+      "end_ms": 11000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000011.jpg",
+      "perceptual_hash": "121224844676b2931f1c19",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 11000,
+      "start_ms": 11000,
+      "end_ms": 12000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000012.jpg",
+      "perceptual_hash": "1215579ac8e263c31e1c18",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 12000,
+      "start_ms": 12000,
+      "end_ms": 13000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000013.jpg",
+      "perceptual_hash": "2221319597969693272422",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 13000,
+      "start_ms": 13000,
+      "end_ms": 14000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000014.jpg",
+      "perceptual_hash": "4a464b632b2f2d2f22201c",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 14000,
+      "start_ms": 14000,
+      "end_ms": 15000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000015.jpg",
+      "perceptual_hash": "2a2a2929a5af9e9624211d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 15000,
+      "start_ms": 15000,
+      "end_ms": 16000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000016.jpg",
+      "perceptual_hash": "121310d8ca4bcf4b25221e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 16000,
+      "start_ms": 16000,
+      "end_ms": 17000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000017.jpg",
+      "perceptual_hash": "1224a4c464e5a5e7211f1b",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 17000,
+      "start_ms": 17000,
+      "end_ms": 18000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000018.jpg",
+      "perceptual_hash": "229351d9d64606cf292824",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 18000,
+      "start_ms": 18000,
+      "end_ms": 19000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000019.jpg",
+      "perceptual_hash": "232d252d4d8f8f0c242624",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 19000,
+      "start_ms": 19000,
+      "end_ms": 20000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000020.jpg",
+      "perceptual_hash": "422929b98dad67cd1f1e22",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 20000,
+      "start_ms": 20000,
+      "end_ms": 21000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000021.jpg",
+      "perceptual_hash": "cb59591e1e2e2e2a27252b",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 21000,
+      "start_ms": 21000,
+      "end_ms": 22000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000022.jpg",
+      "perceptual_hash": "db99d51e1e2e2e3a201d20",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 22000,
+      "start_ms": 22000,
+      "end_ms": 23000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000023.jpg",
+      "perceptual_hash": "4949498dad3dadbd21201e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 23000,
+      "start_ms": 23000,
+      "end_ms": 24000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000024.jpg",
+      "perceptual_hash": "248c87979597999d2b2826",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 24000,
+      "start_ms": 24000,
+      "end_ms": 25000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000025.jpg",
+      "perceptual_hash": "12242594353527b3231e1d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 25000,
+      "start_ms": 25000,
+      "end_ms": 26000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000026.jpg",
+      "perceptual_hash": "766d6d6c4f4f4f4f3b3237",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 26000,
+      "start_ms": 26000,
+      "end_ms": 27000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000027.jpg",
+      "perceptual_hash": "606b6b7d4e4e47563e3243",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 27000,
+      "start_ms": 27000,
+      "end_ms": 28000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000028.jpg",
+      "perceptual_hash": "666d6d6c6fcfcf4b463c4d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 28000,
+      "start_ms": 28000,
+      "end_ms": 29000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000029.jpg",
+      "perceptual_hash": "32323737332747d2312937",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 29000,
+      "start_ms": 29000,
+      "end_ms": 30000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000030.jpg",
+      "perceptual_hash": "32962627632747972c2a27",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 30000,
+      "start_ms": 30000,
+      "end_ms": 31000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000031.jpg",
+      "perceptual_hash": "3227666667670795423845",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 31000,
+      "start_ms": 31000,
+      "end_ms": 32000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000032.jpg",
+      "perceptual_hash": "1287a6a66727c7872c2927",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 32000,
+      "start_ms": 32000,
+      "end_ms": 33000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000033.jpg",
+      "perceptual_hash": "726766666767c587413746",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 33000,
+      "start_ms": 33000,
+      "end_ms": 34000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000034.jpg",
+      "perceptual_hash": "3225646665654796383141",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 34000,
+      "start_ms": 34000,
+      "end_ms": 35000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000035.jpg",
+      "perceptual_hash": "3225a46c65a7a7a72c2925",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 35000,
+      "start_ms": 35000,
+      "end_ms": 36000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000036.jpg",
+      "perceptual_hash": "2265e4cec7878f272a2721",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 36000,
+      "start_ms": 36000,
+      "end_ms": 37000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000037.jpg",
+      "perceptual_hash": "1016927333b39bc91f1d1e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 37000,
+      "start_ms": 37000,
+      "end_ms": 38000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000038.jpg",
+      "perceptual_hash": "52db49099989c9cd2b2826",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 38000,
+      "start_ms": 38000,
+      "end_ms": 39000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000039.jpg",
+      "perceptual_hash": "9299692199ade5d523211c",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 39000,
+      "start_ms": 39000,
+      "end_ms": 40000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000040.jpg",
+      "perceptual_hash": "d2c20b6999a9e9d91f1d17",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 40000,
+      "start_ms": 40000,
+      "end_ms": 41000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000041.jpg",
+      "perceptual_hash": "1227458eae6f07cf352e1f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 41000,
+      "start_ms": 41000,
+      "end_ms": 42000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000042.jpg",
+      "perceptual_hash": "521b59d9cb5b1b8f27211b",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 42000,
+      "start_ms": 42000,
+      "end_ms": 43000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000043.jpg",
+      "perceptual_hash": "b1b118d8db4b4bcd28241e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 43000,
+      "start_ms": 43000,
+      "end_ms": 44000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000044.jpg",
+      "perceptual_hash": "101692527253d3f325221c",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 44000,
+      "start_ms": 44000,
+      "end_ms": 45000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000045.jpg",
+      "perceptual_hash": "d009994333a9a9ab1c1a15",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 45000,
+      "start_ms": 45000,
+      "end_ms": 46000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000046.jpg",
+      "perceptual_hash": "110bd3632369a9ab211f19",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 46000,
+      "start_ms": 46000,
+      "end_ms": 47000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000047.jpg",
+      "perceptual_hash": "90c49cd8d8d8c8ea1c1b1a",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 47000,
+      "start_ms": 47000,
+      "end_ms": 48000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000048.jpg",
+      "perceptual_hash": "90106c31b83082a91c1911",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 48000,
+      "start_ms": 48000,
+      "end_ms": 49000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000049.jpg",
+      "perceptual_hash": "10892921712492892a2417",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 49000,
+      "start_ms": 49000,
+      "end_ms": 50000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000050.jpg",
+      "perceptual_hash": "10896960e16402132c2518",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 50000,
+      "start_ms": 50000,
+      "end_ms": 51000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000051.jpg",
+      "perceptual_hash": "10043434d9e253cb211c16",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 51000,
+      "start_ms": 51000,
+      "end_ms": 52000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000052.jpg",
+      "perceptual_hash": "10c43435b9d3d302201c17",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 52000,
+      "start_ms": 52000,
+      "end_ms": 53000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000053.jpg",
+      "perceptual_hash": "1212229a949cc9491c1916",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 53000,
+      "start_ms": 53000,
+      "end_ms": 54000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000054.jpg",
+      "perceptual_hash": "121242323a3e39991c1917",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 54000,
+      "start_ms": 54000,
+      "end_ms": 55000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000055.jpg",
+      "perceptual_hash": "131169999d9f1c2e1e1b18",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 55000,
+      "start_ms": 55000,
+      "end_ms": 56000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000056.jpg",
+      "perceptual_hash": "9282c922a66347c71a1615",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 56000,
+      "start_ms": 56000,
+      "end_ms": 57000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000057.jpg",
+      "perceptual_hash": "92c08759a7a7a787191614",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 57000,
+      "start_ms": 57000,
+      "end_ms": 58000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000058.jpg",
+      "perceptual_hash": "12020f53ce46c787141211",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 58000,
+      "start_ms": 58000,
+      "end_ms": 59000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000059.jpg",
+      "perceptual_hash": "9282cfade333b3b7161312",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 59000,
+      "start_ms": 59000,
+      "end_ms": 60000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000060.jpg",
+      "perceptual_hash": "523030bbe62636331b1616",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 60000,
+      "start_ms": 60000,
+      "end_ms": 61000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000061.jpg",
+      "perceptual_hash": "121959995e731392171111",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 61000,
+      "start_ms": 61000,
+      "end_ms": 62000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000062.jpg",
+      "perceptual_hash": "12020dac6c3b2b4f13100f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 62000,
+      "start_ms": 62000,
+      "end_ms": 63000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000063.jpg",
+      "perceptual_hash": "12120d0c4c2b3b4b120f0e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 63000,
+      "start_ms": 63000,
+      "end_ms": 65000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000064.jpg",
+      "perceptual_hash": "12140c8c4d2b3b5b12100e",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 65000,
+      "start_ms": 65000,
+      "end_ms": 66000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000066.jpg",
+      "perceptual_hash": "1206ac6c392b4d09151310",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 66000,
+      "start_ms": 66000,
+      "end_ms": 67000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000067.jpg",
+      "perceptual_hash": "020646369404162612100d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 67000,
+      "start_ms": 67000,
+      "end_ms": 68000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000068.jpg",
+      "perceptual_hash": "124a4d4c4b0e38021b190e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 68000,
+      "start_ms": 68000,
+      "end_ms": 69000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000069.jpg",
+      "perceptual_hash": "1a9c072605212f1a2f2b1c",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 69000,
+      "start_ms": 69000,
+      "end_ms": 70000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000070.jpg",
+      "perceptual_hash": "52626ae2d2b1fed1211f1a",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 70000,
+      "start_ms": 70000,
+      "end_ms": 71000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000071.jpg",
+      "perceptual_hash": "120a1a1ad95c0343181314",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 71000,
+      "start_ms": 71000,
+      "end_ms": 72000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000072.jpg",
+      "perceptual_hash": "12120b09d95c0343141011",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 72000,
+      "start_ms": 72000,
+      "end_ms": 74000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000073.jpg",
+      "perceptual_hash": "12021a9ad91d0343130f10",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 74000,
+      "start_ms": 74000,
+      "end_ms": 75000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000075.jpg",
+      "perceptual_hash": "06c62c27d1808b0d100e0e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 75000,
+      "start_ms": 75000,
+      "end_ms": 76000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000076.jpg",
+      "perceptual_hash": "6230363434272c30232215",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 76000,
+      "start_ms": 76000,
+      "end_ms": 77000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000077.jpg",
+      "perceptual_hash": "920109b149c894891b1919",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 77000,
+      "start_ms": 77000,
+      "end_ms": 78000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000078.jpg",
+      "perceptual_hash": "d0e06c62c9c91930211f19",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 78000,
+      "start_ms": 78000,
+      "end_ms": 79000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000079.jpg",
+      "perceptual_hash": "12010921939b9e171b1a1c",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 79000,
+      "start_ms": 79000,
+      "end_ms": 80000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000080.jpg",
+      "perceptual_hash": "90b0a8ca39392af2181819",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 80000,
+      "start_ms": 80000,
+      "end_ms": 81000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000081.jpg",
+      "perceptual_hash": "12004884d2f3d2c21b1b1c",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 81000,
+      "start_ms": 81000,
+      "end_ms": 82000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000082.jpg",
+      "perceptual_hash": "104019ead9d9d9cb1d1d1d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 82000,
+      "start_ms": 82000,
+      "end_ms": 83000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000083.jpg",
+      "perceptual_hash": "12028da2dd99bde5171819",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 83000,
+      "start_ms": 83000,
+      "end_ms": 84000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000084.jpg",
+      "perceptual_hash": "1210cd526e2e3e60151618",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 84000,
+      "start_ms": 84000,
+      "end_ms": 85000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000085.jpg",
+      "perceptual_hash": "9282cfbc5b534f49171717",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 85000,
+      "start_ms": 85000,
+      "end_ms": 86000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000086.jpg",
+      "perceptual_hash": "d2b2bddf6e37347428241a",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 86000,
+      "start_ms": 86000,
+      "end_ms": 87000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000087.jpg",
+      "perceptual_hash": "4a9a99894a434b4b2f281b",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 87000,
+      "start_ms": 87000,
+      "end_ms": 88000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000088.jpg",
+      "perceptual_hash": "12274d8c8cef2323272115",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 88000,
+      "start_ms": 88000,
+      "end_ms": 89000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000089.jpg",
+      "perceptual_hash": "204a0b9989ce464a241f16",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 89000,
+      "start_ms": 89000,
+      "end_ms": 90000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000090.jpg",
+      "perceptual_hash": "3232272d64666c642f2928",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 90000,
+      "start_ms": 90000,
+      "end_ms": 91000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000091.jpg",
+      "perceptual_hash": "123bbb9207232b372c2626",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 91000,
+      "start_ms": 91000,
+      "end_ms": 92000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000092.jpg",
+      "perceptual_hash": "21654ccccb8b89c9262219",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 92000,
+      "start_ms": 92000,
+      "end_ms": 93000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000093.jpg",
+      "perceptual_hash": "206f4bcd8c49839b262016",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 93000,
+      "start_ms": 93000,
+      "end_ms": 94000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000094.jpg",
+      "perceptual_hash": "002f4fcccccf47cf272117",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 94000,
+      "start_ms": 94000,
+      "end_ms": 95000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000095.jpg",
+      "perceptual_hash": "202f4d8ccce727af27211b",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 95000,
+      "start_ms": 95000,
+      "end_ms": 96000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000096.jpg",
+      "perceptual_hash": "202f4dcccd27278d27221c",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 96000,
+      "start_ms": 96000,
+      "end_ms": 97000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000097.jpg",
+      "perceptual_hash": "102f4fcc8ca727af25201a",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 97000,
+      "start_ms": 97000,
+      "end_ms": 98000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000098.jpg",
+      "perceptual_hash": "254dcccc27230dad292421",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 98000,
+      "start_ms": 98000,
+      "end_ms": 99000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000099.jpg",
+      "perceptual_hash": "254dcccca523adad27221f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 99000,
+      "start_ms": 99000,
+      "end_ms": 100000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000100.jpg",
+      "perceptual_hash": "200b498d8d4b4b4929251e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 100000,
+      "start_ms": 100000,
+      "end_ms": 101000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000101.jpg",
+      "perceptual_hash": "204f4b8d8e8b1b9b2c261f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 101000,
+      "start_ms": 101000,
+      "end_ms": 102000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000102.jpg",
+      "perceptual_hash": "204b498d0d0f0f8b2e2822",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 102000,
+      "start_ms": 102000,
+      "end_ms": 103000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000103.jpg",
+      "perceptual_hash": "92332363f1d1d15b161515",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 103000,
+      "start_ms": 103000,
+      "end_ms": 104000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000104.jpg",
+      "perceptual_hash": "101819189c4c0c0d111114",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 104000,
+      "start_ms": 104000,
+      "end_ms": 105000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000105.jpg",
+      "perceptual_hash": "96a7a7878797d3d31a191a",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 105000,
+      "start_ms": 105000,
+      "end_ms": 106000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000106.jpg",
+      "perceptual_hash": "93a2969283e3d3591b1917",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 106000,
+      "start_ms": 106000,
+      "end_ms": 107000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000107.jpg",
+      "perceptual_hash": "52c3d7d6c3c34458151410",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 107000,
+      "start_ms": 107000,
+      "end_ms": 108000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000108.jpg",
+      "perceptual_hash": "97a7a7978393d35b1c1b19",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 108000,
+      "start_ms": 108000,
+      "end_ms": 109000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000109.jpg",
+      "perceptual_hash": "87a7a5c7c7c353531c1b19",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 109000,
+      "start_ms": 109000,
+      "end_ms": 110000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000110.jpg",
+      "perceptual_hash": "60a0a6b7676545671a1710",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 110000,
+      "start_ms": 110000,
+      "end_ms": 111000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000111.jpg",
+      "perceptual_hash": "72d0b2b3a2b636a71d1a14",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 111000,
+      "start_ms": 111000,
+      "end_ms": 112000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000112.jpg",
+      "perceptual_hash": "3250d1bbb3b3b2a21c1a15",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 112000,
+      "start_ms": 112000,
+      "end_ms": 113000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000113.jpg",
+      "perceptual_hash": "22d0a9ab637323ac1a1813",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 113000,
+      "start_ms": 113000,
+      "end_ms": 114000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000114.jpg",
+      "perceptual_hash": "22f0b363637233a9191713",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 114000,
+      "start_ms": 114000,
+      "end_ms": 115000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000115.jpg",
+      "perceptual_hash": "a2606b6b233232a8181611",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 115000,
+      "start_ms": 115000,
+      "end_ms": 116000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000116.jpg",
+      "perceptual_hash": "6260cbc3a396d6d7191916",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 116000,
+      "start_ms": 116000,
+      "end_ms": 117000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000117.jpg",
+      "perceptual_hash": "c045052dad2fcfc6141311",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 117000,
+      "start_ms": 117000,
+      "end_ms": 118000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000118.jpg",
+      "perceptual_hash": "86acad879393939b111111",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 118000,
+      "start_ms": 118000,
+      "end_ms": 119000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000119.jpg",
+      "perceptual_hash": "86a5a5a7a3909c98131210",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 119000,
+      "start_ms": 119000,
+      "end_ms": 120000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000120.jpg",
+      "perceptual_hash": "97a5a5a5a7a3999a11100e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 120000,
+      "start_ms": 120000,
+      "end_ms": 121000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000121.jpg",
+      "perceptual_hash": "9787a5a5a7c7a391141310",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 121000,
+      "start_ms": 121000,
+      "end_ms": 122000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000122.jpg",
+      "perceptual_hash": "50c0d052c246670717150f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 122000,
+      "start_ms": 122000,
+      "end_ms": 123000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000123.jpg",
+      "perceptual_hash": "d2c0d2d2c7a7a5a5161510",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 123000,
+      "start_ms": 123000,
+      "end_ms": 124000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000124.jpg",
+      "perceptual_hash": "d280929287a4a59514130f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 124000,
+      "start_ms": 124000,
+      "end_ms": 125000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000125.jpg",
+      "perceptual_hash": "42c2c6c6e4acc49611100d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 125000,
+      "start_ms": 125000,
+      "end_ms": 126000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000126.jpg",
+      "perceptual_hash": "484991b1b1b3333327251e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 126000,
+      "start_ms": 126000,
+      "end_ms": 127000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000127.jpg",
+      "perceptual_hash": "121293766666a6a625221c",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 127000,
+      "start_ms": 127000,
+      "end_ms": 128000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000128.jpg",
+      "perceptual_hash": "91018969b3bbc9e325221a",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 128000,
+      "start_ms": 128000,
+      "end_ms": 129000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000129.jpg",
+      "perceptual_hash": "91094939b1b9c9d31d1b16",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 129000,
+      "start_ms": 129000,
+      "end_ms": 130000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000130.jpg",
+      "perceptual_hash": "d2c2dace26ae3236262424",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 130000,
+      "start_ms": 130000,
+      "end_ms": 131000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000131.jpg",
+      "perceptual_hash": "125252aea6a73a361b1a19",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 131000,
+      "start_ms": 131000,
+      "end_ms": 132000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000132.jpg",
+      "perceptual_hash": "90944db999ddd5d11a1915",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 132000,
+      "start_ms": 132000,
+      "end_ms": 133000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000133.jpg",
+      "perceptual_hash": "90846499d9ddc1d91e1c17",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 133000,
+      "start_ms": 133000,
+      "end_ms": 134000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000134.jpg",
+      "perceptual_hash": "11294b3332f383f31e1b13",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 134000,
+      "start_ms": 134000,
+      "end_ms": 135000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000135.jpg",
+      "perceptual_hash": "9109c93bb3b9cbc3201d15",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 135000,
+      "start_ms": 135000,
+      "end_ms": 137000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000136.jpg",
+      "perceptual_hash": "9109c92bb3b9c1e31f1d15",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 137000,
+      "start_ms": 137000,
+      "end_ms": 138000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000138.jpg",
+      "perceptual_hash": "5280ac70cc6e6a6a191712",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 138000,
+      "start_ms": 138000,
+      "end_ms": 139000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000139.jpg",
+      "perceptual_hash": "9290249898e2d2d01f1d17",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 139000,
+      "start_ms": 139000,
+      "end_ms": 140000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000140.jpg",
+      "perceptual_hash": "91094930b4a4c4f4211f15",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 140000,
+      "start_ms": 140000,
+      "end_ms": 141000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000141.jpg",
+      "perceptual_hash": "9a9a4f4f4b530f1b3a3327",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 141000,
+      "start_ms": 141000,
+      "end_ms": 142000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000142.jpg",
+      "perceptual_hash": "129637339d8d9d9d2b261d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 142000,
+      "start_ms": 142000,
+      "end_ms": 143000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000143.jpg",
+      "perceptual_hash": "425a979999d61e1e2e281d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 143000,
+      "start_ms": 143000,
+      "end_ms": 144000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000144.jpg",
+      "perceptual_hash": "322c2f3b2d0d3d3d38322b",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 144000,
+      "start_ms": 144000,
+      "end_ms": 145000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000145.jpg",
+      "perceptual_hash": "92326c6f3f3b0d85241f16",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 145000,
+      "start_ms": 145000,
+      "end_ms": 146000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000146.jpg",
+      "perceptual_hash": "b2326c6f3f3d0f37312a22",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 146000,
+      "start_ms": 146000,
+      "end_ms": 147000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000147.jpg",
+      "perceptual_hash": "b2326c6f3f3d8d2f2a241d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 147000,
+      "start_ms": 147000,
+      "end_ms": 148000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000148.jpg",
+      "perceptual_hash": "b2362c6f3f350f2e2f2922",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 148000,
+      "start_ms": 148000,
+      "end_ms": 149000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000149.jpg",
+      "perceptual_hash": "b232686f3f3d0d2d2c2620",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 149000,
+      "start_ms": 149000,
+      "end_ms": 150000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000150.jpg",
+      "perceptual_hash": "b2362c6f3fb58f2e2d2721",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 150000,
+      "start_ms": 150000,
+      "end_ms": 151000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000151.jpg",
+      "perceptual_hash": "b23a6c6f3b2d0f2f2d2722",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 151000,
+      "start_ms": 151000,
+      "end_ms": 152000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000152.jpg",
+      "perceptual_hash": "b232686f3f3d0d2d2b2620",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 152000,
+      "start_ms": 152000,
+      "end_ms": 153000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000153.jpg",
+      "perceptual_hash": "323a685f3f2d0d3d2c2622",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 153000,
+      "start_ms": 153000,
+      "end_ms": 154000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000154.jpg",
+      "perceptual_hash": "322a687f3b2d0d2d2d2823",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 154000,
+      "start_ms": 154000,
+      "end_ms": 155000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000155.jpg",
+      "perceptual_hash": "3232685f3f3f0d3d2a2520",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 155000,
+      "start_ms": 155000,
+      "end_ms": 157000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000156.jpg",
+      "perceptual_hash": "322a687f3b2d0d3d2d2825",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 157000,
+      "start_ms": 157000,
+      "end_ms": 158000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000158.jpg",
+      "perceptual_hash": "b232686f1f9dcdcd231e1b",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 158000,
+      "start_ms": 158000,
+      "end_ms": 159000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000159.jpg",
+      "perceptual_hash": "322a685f3b8dcd9726211f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 159000,
+      "start_ms": 159000,
+      "end_ms": 160000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000160.jpg",
+      "perceptual_hash": "322a685f178fcd9d24201c",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 160000,
+      "start_ms": 160000,
+      "end_ms": 161000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000161.jpg",
+      "perceptual_hash": "b232685b1716862d2e2929",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 161000,
+      "start_ms": 161000,
+      "end_ms": 162000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000162.jpg",
+      "perceptual_hash": "90322c6f1b97969625211e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 162000,
+      "start_ms": 162000,
+      "end_ms": 163000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000163.jpg",
+      "perceptual_hash": "b2326c6f179d8d9526211d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 163000,
+      "start_ms": 163000,
+      "end_ms": 164000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000164.jpg",
+      "perceptual_hash": "92322c6f1f4d4f0f26221d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 164000,
+      "start_ms": 164000,
+      "end_ms": 165000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000165.jpg",
+      "perceptual_hash": "b232686f7f5f46462b2523",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 165000,
+      "start_ms": 165000,
+      "end_ms": 166000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000166.jpg",
+      "perceptual_hash": "32286eb78f9f970d302829",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 166000,
+      "start_ms": 166000,
+      "end_ms": 167000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000167.jpg",
+      "perceptual_hash": "52d03e6f0d1d5c6c322c2f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 167000,
+      "start_ms": 167000,
+      "end_ms": 168000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000168.jpg",
+      "perceptual_hash": "60d2d03e2b1d1c3c292422",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 168000,
+      "start_ms": 168000,
+      "end_ms": 169000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000169.jpg",
+      "perceptual_hash": "7272d3b87726666e26211c",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 169000,
+      "start_ms": 169000,
+      "end_ms": 170000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000170.jpg",
+      "perceptual_hash": "6072d134776666662b2721",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 170000,
+      "start_ms": 170000,
+      "end_ms": 171000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000171.jpg",
+      "perceptual_hash": "50f2b57565664646312c2b",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 171000,
+      "start_ms": 171000,
+      "end_ms": 172000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000172.jpg",
+      "perceptual_hash": "322c269797868f4f2a2526",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 172000,
+      "start_ms": 172000,
+      "end_ms": 173000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000173.jpg",
+      "perceptual_hash": "627a556f6e665a5b282420",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 173000,
+      "start_ms": 173000,
+      "end_ms": 174000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000174.jpg",
+      "perceptual_hash": "e2d2cd6d6d4edede332f31",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 174000,
+      "start_ms": 174000,
+      "end_ms": 175000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000175.jpg",
+      "perceptual_hash": "42f2accdca4e9e9f282626",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 175000,
+      "start_ms": 175000,
+      "end_ms": 177000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000176.jpg",
+      "perceptual_hash": "42d6aacaceda9f9f272524",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 177000,
+      "start_ms": 177000,
+      "end_ms": 178000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000178.jpg",
+      "perceptual_hash": "42f6aacade5a9d8f242221",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 178000,
+      "start_ms": 178000,
+      "end_ms": 179000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000179.jpg",
+      "perceptual_hash": "42f4aacadeda9fae282523",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 179000,
+      "start_ms": 179000,
+      "end_ms": 180000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000180.jpg",
+      "perceptual_hash": "c2f6accece5a9eae2a2727",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 180000,
+      "start_ms": 180000,
+      "end_ms": 183000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000181.jpg",
+      "perceptual_hash": "42f4aacade5a9eae262321",
+      "frame_count": 3
+    },
+    {
+      "timestamp_ms": 183000,
+      "start_ms": 183000,
+      "end_ms": 184000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000184.jpg",
+      "perceptual_hash": "d2f299dadb9b9dac282421",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 184000,
+      "start_ms": 184000,
+      "end_ms": 185000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000185.jpg",
+      "perceptual_hash": "d2e299dbdb9d3d3c262220",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 185000,
+      "start_ms": 185000,
+      "end_ms": 186000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000186.jpg",
+      "perceptual_hash": "62d6aecd4e4e9e9e28241f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 186000,
+      "start_ms": 186000,
+      "end_ms": 187000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000187.jpg",
+      "perceptual_hash": "1214525b4d080e752f2e2e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 187000,
+      "start_ms": 187000,
+      "end_ms": 188000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000188.jpg",
+      "perceptual_hash": "1212b71d19998e862e2e33",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 188000,
+      "start_ms": 188000,
+      "end_ms": 189000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000189.jpg",
+      "perceptual_hash": "42f4ad4d4c4e9e9e2b251f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 189000,
+      "start_ms": 189000,
+      "end_ms": 190000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000190.jpg",
+      "perceptual_hash": "60745c6d6c4fce5e322b23",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 190000,
+      "start_ms": 190000,
+      "end_ms": 191000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000191.jpg",
+      "perceptual_hash": "6064dd6d6d4d1e1e2b251e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 191000,
+      "start_ms": 191000,
+      "end_ms": 192000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000192.jpg",
+      "perceptual_hash": "6064dd6d6d6d9e9e2c261f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 192000,
+      "start_ms": 192000,
+      "end_ms": 193000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000193.jpg",
+      "perceptual_hash": "6064d76d6d6c8e9e2d2720",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 193000,
+      "start_ms": 193000,
+      "end_ms": 194000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000194.jpg",
+      "perceptual_hash": "62d2bdcccfc99f9e2f2922",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 194000,
+      "start_ms": 194000,
+      "end_ms": 195000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000195.jpg",
+      "perceptual_hash": "72d2b9c8cb4b9d9e2b2620",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 195000,
+      "start_ms": 195000,
+      "end_ms": 196000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000196.jpg",
+      "perceptual_hash": "6252dded4f6fdfde2c2721",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 196000,
+      "start_ms": 196000,
+      "end_ms": 197000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000197.jpg",
+      "perceptual_hash": "226a7d5e6c3e6d4f24211a",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 197000,
+      "start_ms": 197000,
+      "end_ms": 198000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000198.jpg",
+      "perceptual_hash": "121a1b36353d0f8e343537",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 198000,
+      "start_ms": 198000,
+      "end_ms": 199000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000199.jpg",
+      "perceptual_hash": "606cf5ed4d6cce962b251f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 199000,
+      "start_ms": 199000,
+      "end_ms": 200000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000200.jpg",
+      "perceptual_hash": "6064bdedcdca9e9e2d2720",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 200000,
+      "start_ms": 200000,
+      "end_ms": 201000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000201.jpg",
+      "perceptual_hash": "52d2abc9cbdb9d8c2d2822",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 201000,
+      "start_ms": 201000,
+      "end_ms": 202000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000202.jpg",
+      "perceptual_hash": "52f2bbdadbdb9dac2d2821",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 202000,
+      "start_ms": 202000,
+      "end_ms": 203000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000203.jpg",
+      "perceptual_hash": "72d0bbcbcb5b9d9e2d2821",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 203000,
+      "start_ms": 203000,
+      "end_ms": 204000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000204.jpg",
+      "perceptual_hash": "626455456d6d4e4f2e2922",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 204000,
+      "start_ms": 204000,
+      "end_ms": 205000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000205.jpg",
+      "perceptual_hash": "321a9e1519999c8c323130",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 205000,
+      "start_ms": 205000,
+      "end_ms": 206000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000206.jpg",
+      "perceptual_hash": "521a3c3c3c382c6d15120d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 206000,
+      "start_ms": 206000,
+      "end_ms": 207000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000207.jpg",
+      "perceptual_hash": "626cd5ed6d6dce9e2c261e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 207000,
+      "start_ms": 207000,
+      "end_ms": 208000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000208.jpg",
+      "perceptual_hash": "6064d5ed4d6ade9e2d2720",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 208000,
+      "start_ms": 208000,
+      "end_ms": 210000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000209.jpg",
+      "perceptual_hash": "52d2bbc8cbcb9d9e2c2720",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 210000,
+      "start_ms": 210000,
+      "end_ms": 211000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000211.jpg",
+      "perceptual_hash": "7262d7756d6dcece2b2620",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 211000,
+      "start_ms": 211000,
+      "end_ms": 212000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000212.jpg",
+      "perceptual_hash": "202c6d6a3c3c266627241d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 212000,
+      "start_ms": 212000,
+      "end_ms": 213000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000213.jpg",
+      "perceptual_hash": "120a1b161e9a988e272727",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 213000,
+      "start_ms": 213000,
+      "end_ms": 214000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000214.jpg",
+      "perceptual_hash": "606cbced4d4f9e962d2823",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 214000,
+      "start_ms": 214000,
+      "end_ms": 216000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000215.jpg",
+      "perceptual_hash": "60d6bced4e4a9e9e2d2924",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 216000,
+      "start_ms": 216000,
+      "end_ms": 217000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000217.jpg",
+      "perceptual_hash": "52d2adcccfc99e9e2e2a25",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 217000,
+      "start_ms": 217000,
+      "end_ms": 218000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000218.jpg",
+      "perceptual_hash": "52d2a9c8dbda9d9e2b2823",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 218000,
+      "start_ms": 218000,
+      "end_ms": 219000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000219.jpg",
+      "perceptual_hash": "52d2bdcccfca9c9e2a2622",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 219000,
+      "start_ms": 219000,
+      "end_ms": 220000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000220.jpg",
+      "perceptual_hash": "52d2bdeccfcb9d9e292521",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 220000,
+      "start_ms": 220000,
+      "end_ms": 223000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000221.jpg",
+      "perceptual_hash": "52d2bbc8cbcb9d9e2a2622",
+      "frame_count": 3
+    },
+    {
+      "timestamp_ms": 223000,
+      "start_ms": 223000,
+      "end_ms": 224000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000224.jpg",
+      "perceptual_hash": "52d2bdeccdcb9d9e282521",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 224000,
+      "start_ms": 224000,
+      "end_ms": 225000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000225.jpg",
+      "perceptual_hash": "7272d6ed4f69df9e292622",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 225000,
+      "start_ms": 225000,
+      "end_ms": 226000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000226.jpg",
+      "perceptual_hash": "7266765667646f4f2b2823",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 226000,
+      "start_ms": 226000,
+      "end_ms": 227000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000227.jpg",
+      "perceptual_hash": "321abe35159999982d2d2d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 227000,
+      "start_ms": 227000,
+      "end_ms": 228000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000228.jpg",
+      "perceptual_hash": "721ab63595999998212122",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 228000,
+      "start_ms": 228000,
+      "end_ms": 229000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000229.jpg",
+      "perceptual_hash": "7212b63515999998201f1f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 229000,
+      "start_ms": 229000,
+      "end_ms": 233000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000230.jpg",
+      "perceptual_hash": "6212b635199999be201e1c",
+      "frame_count": 4
+    },
+    {
+      "timestamp_ms": 233000,
+      "start_ms": 233000,
+      "end_ms": 235000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000234.jpg",
+      "perceptual_hash": "0c0c0f23bba3e763322f2c",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 235000,
+      "start_ms": 235000,
+      "end_ms": 236000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000236.jpg",
+      "perceptual_hash": "1313030a2c29a910302d28",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 236000,
+      "start_ms": 236000,
+      "end_ms": 237000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000237.jpg",
+      "perceptual_hash": "d2d2bbcd4f499d9e2e271e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 237000,
+      "start_ms": 237000,
+      "end_ms": 238000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000238.jpg",
+      "perceptual_hash": "d2d2b9ca4b4a9d9e2c261d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 238000,
+      "start_ms": 238000,
+      "end_ms": 239000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000239.jpg",
+      "perceptual_hash": "d2d2bbec4f4a9c9e2b261e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 239000,
+      "start_ms": 239000,
+      "end_ms": 240000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000240.jpg",
+      "perceptual_hash": "d2d2b5ac4d49de962a251d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 240000,
+      "start_ms": 240000,
+      "end_ms": 241000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000241.jpg",
+      "perceptual_hash": "d2d2b5ac4d4dde962c2720",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 241000,
+      "start_ms": 241000,
+      "end_ms": 242000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000242.jpg",
+      "perceptual_hash": "f252ffad4f69df9e2b2620",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 242000,
+      "start_ms": 242000,
+      "end_ms": 243000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000243.jpg",
+      "perceptual_hash": "f262d6ed6f6d4ede2c2721",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 243000,
+      "start_ms": 243000,
+      "end_ms": 244000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000244.jpg",
+      "perceptual_hash": "d278785a7e3a6d4e221f19",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 244000,
+      "start_ms": 244000,
+      "end_ms": 245000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000245.jpg",
+      "perceptual_hash": "723a76657179f42b191717",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 245000,
+      "start_ms": 245000,
+      "end_ms": 247000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000246.jpg",
+      "perceptual_hash": "723a3e256171fcaa1a1715",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 247000,
+      "start_ms": 247000,
+      "end_ms": 248000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000248.jpg",
+      "perceptual_hash": "723a36377969e4ab1d1a15",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 248000,
+      "start_ms": 248000,
+      "end_ms": 249000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000249.jpg",
+      "perceptual_hash": "723a36757929a4bf201c16",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 249000,
+      "start_ms": 249000,
+      "end_ms": 251000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000250.jpg",
+      "perceptual_hash": "723a37377929e4a7221d17",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 251000,
+      "start_ms": 251000,
+      "end_ms": 252000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000252.jpg",
+      "perceptual_hash": "527ad4be6a6c4dcf3e3425",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 252000,
+      "start_ms": 252000,
+      "end_ms": 253000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000253.jpg",
+      "perceptual_hash": "c2d0bccacfcf9d9e312921",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 253000,
+      "start_ms": 253000,
+      "end_ms": 254000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000254.jpg",
+      "perceptual_hash": "c2d6b4eacecb9d9f2b251d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 254000,
+      "start_ms": 254000,
+      "end_ms": 256000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000255.jpg",
+      "perceptual_hash": "d2d2b1d9dbdb9d9c2a241d",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 256000,
+      "start_ms": 256000,
+      "end_ms": 258000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000257.jpg",
+      "perceptual_hash": "d2d2b3a8dbdb9d9c29241e",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 258000,
+      "start_ms": 258000,
+      "end_ms": 259000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000259.jpg",
+      "perceptual_hash": "f2c6f4ad4f6bcfde2a2620",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 259000,
+      "start_ms": 259000,
+      "end_ms": 260000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000260.jpg",
+      "perceptual_hash": "e064dcad6d6ccede2b2621",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 260000,
+      "start_ms": 260000,
+      "end_ms": 261000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000261.jpg",
+      "perceptual_hash": "92327a7234343a6a1d1a14",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 261000,
+      "start_ms": 261000,
+      "end_ms": 263000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000262.jpg",
+      "perceptual_hash": "b2226d6929343634191813",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 263000,
+      "start_ms": 263000,
+      "end_ms": 264000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000264.jpg",
+      "perceptual_hash": "b2306d6c343436341c1a14",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 264000,
+      "start_ms": 264000,
+      "end_ms": 265000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000265.jpg",
+      "perceptual_hash": "d2d8b4aacaca9d9f2a2623",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 265000,
+      "start_ms": 265000,
+      "end_ms": 266000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000266.jpg",
+      "perceptual_hash": "c2ccb6e9cecb9d9f292522",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 266000,
+      "start_ms": 266000,
+      "end_ms": 267000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000267.jpg",
+      "perceptual_hash": "d2d0b3eacbdb9d8c282422",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 267000,
+      "start_ms": 267000,
+      "end_ms": 271000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000268.jpg",
+      "perceptual_hash": "d2d2b6e8dbdb9d8c272421",
+      "frame_count": 4
+    },
+    {
+      "timestamp_ms": 271000,
+      "start_ms": 271000,
+      "end_ms": 272000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000272.jpg",
+      "perceptual_hash": "080c0f2eb3b3af47312c28",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 272000,
+      "start_ms": 272000,
+      "end_ms": 273000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000273.jpg",
+      "perceptual_hash": "119094544c0496b5141414",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 273000,
+      "start_ms": 273000,
+      "end_ms": 274000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000274.jpg",
+      "perceptual_hash": "d2727b523a382a4c1d1b16",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 274000,
+      "start_ms": 274000,
+      "end_ms": 275000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000275.jpg",
+      "perceptual_hash": "f230756c343434341b1915",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 275000,
+      "start_ms": 275000,
+      "end_ms": 277000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000276.jpg",
+      "perceptual_hash": "d2327d6c29343434191814",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 277000,
+      "start_ms": 277000,
+      "end_ms": 278000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000278.jpg",
+      "perceptual_hash": "f230756c343434741b1915",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 278000,
+      "start_ms": 278000,
+      "end_ms": 279000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000279.jpg",
+      "perceptual_hash": "d2d8f4bc486ccddd282523",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 279000,
+      "start_ms": 279000,
+      "end_ms": 281000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000280.jpg",
+      "perceptual_hash": "c2c8b5eacaca9d9f272322",
+      "frame_count": 2
+    },
+    {
+      "timestamp_ms": 281000,
+      "start_ms": 281000,
+      "end_ms": 282000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000282.jpg",
+      "perceptual_hash": "e2d2bdec4fcb9d962c2825",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 282000,
+      "start_ms": 282000,
+      "end_ms": 283000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000283.jpg",
+      "perceptual_hash": "d2d2b3eccdcb9d96282522",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 283000,
+      "start_ms": 283000,
+      "end_ms": 284000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000284.jpg",
+      "perceptual_hash": "f2e2f3ac4d6bdd96282521",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 284000,
+      "start_ms": 284000,
+      "end_ms": 285000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000285.jpg",
+      "perceptual_hash": "e2f2f1ed4d6bdc962a2823",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 285000,
+      "start_ms": 285000,
+      "end_ms": 286000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000286.jpg",
+      "perceptual_hash": "7262d3fc6d6dced6292621",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 286000,
+      "start_ms": 286000,
+      "end_ms": 290000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000287.jpg",
+      "perceptual_hash": "72625b556665cdce2b2821",
+      "frame_count": 4
+    },
+    {
+      "timestamp_ms": 290000,
+      "start_ms": 290000,
+      "end_ms": 291000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000291.jpg",
+      "perceptual_hash": "e272d17c6d6dced62e2b27",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 291000,
+      "start_ms": 291000,
+      "end_ms": 292000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000292.jpg",
+      "perceptual_hash": "f2f2f5ec6d6dced62a2825",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 292000,
+      "start_ms": 292000,
+      "end_ms": 293000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000293.jpg",
+      "perceptual_hash": "f2e2f1ad4d6ecddf252221",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 293000,
+      "start_ms": 293000,
+      "end_ms": 294000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000294.jpg",
+      "perceptual_hash": "f2d2bbec4f4d9c9c272522",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 294000,
+      "start_ms": 294000,
+      "end_ms": 295000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000295.jpg",
+      "perceptual_hash": "525c6f6f4e5a5e7e332f2d",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 295000,
+      "start_ms": 295000,
+      "end_ms": 296000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000296.jpg",
+      "perceptual_hash": "6a681d1d193b3b3b3b382f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 296000,
+      "start_ms": 296000,
+      "end_ms": 297000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000297.jpg",
+      "perceptual_hash": "9282b6b93931372f212023",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 297000,
+      "start_ms": 297000,
+      "end_ms": 298000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000298.jpg",
+      "perceptual_hash": "12002284326272b3181819",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 298000,
+      "start_ms": 298000,
+      "end_ms": 299000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000299.jpg",
+      "perceptual_hash": "12222d2236361b3a272423",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 299000,
+      "start_ms": 299000,
+      "end_ms": 300000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000300.jpg",
+      "perceptual_hash": "1252abb43236363b1f1c1a",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 300000,
+      "start_ms": 300000,
+      "end_ms": 301000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000301.jpg",
+      "perceptual_hash": "12022db83676361a1f1c19",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 301000,
+      "start_ms": 301000,
+      "end_ms": 302000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000302.jpg",
+      "perceptual_hash": "12129dd8163e3c361f1c1a",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 302000,
+      "start_ms": 302000,
+      "end_ms": 303000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000303.jpg",
+      "perceptual_hash": "126069d4fbe9f9d323201f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 303000,
+      "start_ms": 303000,
+      "end_ms": 304000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000304.jpg",
+      "perceptual_hash": "1010a386aaabbbbb191916",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 304000,
+      "start_ms": 304000,
+      "end_ms": 305000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000305.jpg",
+      "perceptual_hash": "322a6c0c2c24a5b638301b",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 305000,
+      "start_ms": 305000,
+      "end_ms": 306000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000306.jpg",
+      "perceptual_hash": "4a9e9e930a0a2b29372f1e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 306000,
+      "start_ms": 306000,
+      "end_ms": 307000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000307.jpg",
+      "perceptual_hash": "725c1a566666581c363029",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 307000,
+      "start_ms": 307000,
+      "end_ms": 308000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000308.jpg",
+      "perceptual_hash": "e270ff4f4e68e96b26272a",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 308000,
+      "start_ms": 308000,
+      "end_ms": 309000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000309.jpg",
+      "perceptual_hash": "30cc4d1e0d0f1d0d312f2f",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 309000,
+      "start_ms": 309000,
+      "end_ms": 310000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000310.jpg",
+      "perceptual_hash": "b93c1f0f1f3d1e192d2c2c",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 310000,
+      "start_ms": 310000,
+      "end_ms": 311000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000311.jpg",
+      "perceptual_hash": "565e1e0e87868505383534",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 311000,
+      "start_ms": 311000,
+      "end_ms": 312000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000312.jpg",
+      "perceptual_hash": "1202a747557b5bd3211d1a",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 312000,
+      "start_ms": 312000,
+      "end_ms": 313000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000313.jpg",
+      "perceptual_hash": "12000b43ab3c2d39221e1b",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 313000,
+      "start_ms": 313000,
+      "end_ms": 314000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000314.jpg",
+      "perceptual_hash": "020627173733676725211e",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 314000,
+      "start_ms": 314000,
+      "end_ms": 315000,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000315.jpg",
+      "perceptual_hash": "12062787576967e7262220",
+      "frame_count": 1
+    },
+    {
+      "timestamp_ms": 315000,
+      "start_ms": 315000,
+      "end_ms": 315633,
+      "path": "/Users/zap/Documents/PatrolLens/.patrol-lens-artifacts/media/frames/video-7e73586a9abc86ae/1000ms/frame-00000316.jpg",
+      "perceptual_hash": "120216967a6d2723201d19",
+      "frame_count": 1
+    }
+  ]
+}
