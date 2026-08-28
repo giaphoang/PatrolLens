@@ -25,6 +25,13 @@ speech = [
   "faster-whisper>=1.0",
 ]
 audio = ["silero-vad>=5"]
+clap-macos = [
+  "coremltools>=8,<10",
+  "huggingface-hub>=0.27",
+  "numpy>=1.26",
+  "onnxruntime>=1.20",
+  "transformers>=4.45",
+]
 full = [
   "openai>=1.0",
   "psycopg[binary]>=3.2",
@@ -33,6 +40,10 @@ full = [
   "pillow>=10",
   "torch>=2.2",
   "silero-vad>=5",
+  "coremltools>=8,<10; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "huggingface-hub>=0.27; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "onnxruntime>=1.20; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "transformers>=4.45; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 dev = ["pytest>=8"]
 

@@ -344,12 +344,21 @@ class PostgresIndexStore:
             rows = cursor.fetchall()
         yield from (self._evidence(row) for row in rows)
 
-    def evidence_count(self, video_id: str, *, modality: str | None = None) -> int:
+    def evidence_count(
+        self,
+        video_id: str,
+        *,
+        modality: str | None = None,
+        source: str | None = None,
+    ) -> int:
         sql = "SELECT COUNT(*) AS count FROM pl_evidence WHERE video_id = %s"
         params: list[Any] = [video_id]
         if modality:
             sql += " AND modality = %s"
             params.append(modality)
+        if source:
+            sql += " AND source = %s"
+            params.append(source)
         with self.db.cursor() as cursor:
             cursor.execute(sql, params)
             row = cursor.fetchone()
@@ -499,12 +508,108 @@ class PostgresIndexStore:
         for dimension in dimensions:
             self._ensure_vector_index(cursor, dimension)
 
+    def _insert_audio_embeddings(
+        self,
+        cursor: Any,
+        records: list[EmbeddingRecord],
+    ) -> None:
+        for item in records:
+            vector = list(item.vector)
+            if len(vector) != 512:
+                raise ValueError(f"Expected 512, got {len(vector)}")
+            if item.modality != "audio_event":
+                raise PostgresTraceabilityError(
+                    f"512-dimensional embedding {item.id!r} must use audio_event modality"
+                )
+            if not item.model:
+                raise PostgresTraceabilityError(
+                    f"embedding {item.id!r} has no model version"
+                )
+            source = self._embedding_source(cursor, item.evidence_id)
+            if source["modality"] != item.modality:
+                raise PostgresTraceabilityError(
+                    f"embedding {item.id!r} modality does not match evidence "
+                    f"{item.evidence_id!r}"
+                )
+            vector_text = _vector_literal(vector)
+            cursor.execute(
+                """INSERT INTO pl_audio_embeddings
+                   (id, evidence_id, video_id, start_ms, end_ms, modality, source_uri,
+                    segment_id, evidence_text, evidence_metadata, evidence_source,
+                    model_version, confidence, evidence_hash, source_sha256,
+                    embedding_hash, embedding_512, dimensions, metadata)
+                   SELECT %s, e.id, e.video_id, e.start_ms, e.end_ms, e.modality,
+                          COALESCE(NULLIF(e.metadata->>'source_uri', ''),
+                                   NULLIF(e.metadata->>'media_path', ''),
+                                   NULLIF(e.metadata->>'frame_path', ''), a.source_uri),
+                          e.segment_id, e.content, e.metadata, e.source, %s,
+                          e.confidence, e.evidence_hash, a.sha256, %s,
+                          %s::vector(512), 512, %s::jsonb
+                     FROM pl_evidence e JOIN pl_assets a ON a.id = e.video_id
+                    WHERE e.id = %s
+                   ON CONFLICT(id) DO UPDATE SET
+                     evidence_id = EXCLUDED.evidence_id,
+                     video_id = EXCLUDED.video_id,
+                     segment_id = EXCLUDED.segment_id,
+                     start_ms = EXCLUDED.start_ms,
+                     end_ms = EXCLUDED.end_ms,
+                     modality = EXCLUDED.modality,
+                     source_uri = EXCLUDED.source_uri,
+                     evidence_text = EXCLUDED.evidence_text,
+                     evidence_metadata = EXCLUDED.evidence_metadata,
+                     evidence_source = EXCLUDED.evidence_source,
+                     model_version = EXCLUDED.model_version,
+                     confidence = EXCLUDED.confidence,
+                     evidence_hash = EXCLUDED.evidence_hash,
+                     source_sha256 = EXCLUDED.source_sha256,
+                     embedding_hash = EXCLUDED.embedding_hash,
+                     embedding_512 = EXCLUDED.embedding_512,
+                     dimensions = 512,
+                     metadata = EXCLUDED.metadata
+                   RETURNING id""",
+                (
+                    item.id,
+                    item.model,
+                    _hash_vector(vector),
+                    vector_text,
+                    json.dumps(item.metadata, default=str),
+                    item.evidence_id,
+                ),
+            )
+            if cursor.fetchone() is None:
+                raise PostgresTraceabilityError(
+                    f"embedding {item.id!r} was not linked to evidence "
+                    f"{item.evidence_id!r}"
+                )
+        if records:
+            self._ensure_vector_index(cursor, 512)
+
+    def _insert_embedding_records(
+        self,
+        cursor: Any,
+        records: list[EmbeddingRecord],
+    ) -> None:
+        semantic: list[EmbeddingRecord] = []
+        audio: list[EmbeddingRecord] = []
+        for item in records:
+            if len(item.vector) == 768:
+                semantic.append(item)
+            elif len(item.vector) == 512 and item.modality == "audio_event":
+                audio.append(item)
+            else:
+                raise ValueError(
+                    "PostgreSQL accepts Gemini vectors at 768 dimensions and "
+                    "CLAP audio_event vectors at 512 dimensions"
+                )
+        self._insert_embeddings(cursor, semantic)
+        self._insert_audio_embeddings(cursor, audio)
+
     def add_embeddings(self, records: Iterable[EmbeddingRecord]) -> None:
         items = list(records)
         if not items:
             return
         with self.transaction(), self.db.cursor() as cursor:
-            self._insert_embeddings(cursor, items)
+            self._insert_embedding_records(cursor, items)
 
     def add_evidence_and_embeddings(
         self,
@@ -517,7 +622,7 @@ class PostgresIndexStore:
             return
         with self.transaction(), self.db.cursor() as cursor:
             self._insert_evidence_many(cursor, evidence_items)
-            self._insert_embeddings(cursor, embedding_items)
+            self._insert_embedding_records(cursor, embedding_items)
 
     def get_cached_embedding(
         self,
@@ -525,12 +630,13 @@ class PostgresIndexStore:
         *,
         expected_dimensions: int,
     ) -> list[float] | None:
-        if expected_dimensions != 768:
-            raise ValueError("PostgreSQL embedding cache is fixed at 768 dimensions")
+        if expected_dimensions not in (512, 768):
+            raise ValueError("PostgreSQL embedding cache supports 512 or 768 dimensions")
+        table = "pl_audio_embedding_cache" if expected_dimensions == 512 else "pl_embedding_cache"
+        column = "embedding_512" if expected_dimensions == 512 else "embedding"
         with self.db.cursor() as cursor:
             cursor.execute(
-                """SELECT embedding, dimensions FROM pl_embedding_cache
-                   WHERE cache_key = %s""",
+                f"SELECT {column} AS embedding, dimensions FROM {table} WHERE cache_key = %s",
                 (cache_key,),
             )
             row = cursor.fetchone()
@@ -538,8 +644,7 @@ class PostgresIndexStore:
             return None
         with self.transaction(), self.db.cursor() as cursor:
             cursor.execute(
-                """UPDATE pl_embedding_cache SET last_used_at = CURRENT_TIMESTAMP
-                   WHERE cache_key = %s""",
+                f"UPDATE {table} SET last_used_at = CURRENT_TIMESTAMP WHERE cache_key = %s",
                 (cache_key,),
             )
         return _parse_vector(row["embedding"])
@@ -550,23 +655,25 @@ class PostgresIndexStore:
         *,
         expected_dimensions: int,
     ) -> dict[str, list[float]]:
-        if expected_dimensions != 768:
-            raise ValueError("PostgreSQL embedding cache is fixed at 768 dimensions")
+        if expected_dimensions not in (512, 768):
+            raise ValueError("PostgreSQL embedding cache supports 512 or 768 dimensions")
         if not cache_keys:
             return {}
         unique = list(dict.fromkeys(cache_keys))
+        table = "pl_audio_embedding_cache" if expected_dimensions == 512 else "pl_embedding_cache"
+        column = "embedding_512" if expected_dimensions == 512 else "embedding"
         with self.transaction(), self.db.cursor() as cursor:
             cursor.execute(
-                """SELECT cache_key, embedding FROM pl_embedding_cache
-                   WHERE dimensions = 768 AND cache_key = ANY(%s)""",
-                (unique,),
+                f"""SELECT cache_key, {column} AS embedding FROM {table}
+                    WHERE dimensions = %s AND cache_key = ANY(%s)""",
+                (expected_dimensions, unique),
             )
             rows = cursor.fetchall()
             found = {row["cache_key"]: _parse_vector(row["embedding"]) for row in rows}
             if found:
                 cursor.execute(
-                    """UPDATE pl_embedding_cache SET last_used_at = CURRENT_TIMESTAMP
-                       WHERE cache_key = ANY(%s)""",
+                    f"""UPDATE {table} SET last_used_at = CURRENT_TIMESTAMP
+                        WHERE cache_key = ANY(%s)""",
                     (list(found),),
                 )
         return found
@@ -582,29 +689,52 @@ class PostgresIndexStore:
         preprocessing_version: str,
         vector: list[float],
     ) -> None:
-        if dimensions != 768 or len(vector) != 768:
-            raise ValueError(f"Expected 768, got {len(vector)}")
+        if dimensions not in (512, 768) or len(vector) != dimensions:
+            raise ValueError(f"Expected {dimensions}, got {len(vector)}")
         vector_text = _vector_literal(vector)
         with self.transaction(), self.db.cursor() as cursor:
-            cursor.execute(
-                """INSERT INTO pl_embedding_cache
-                   (cache_key, content_hash, modality, model_version, dimensions,
-                    preprocessing_version, embedding, embedding_hash)
-                   VALUES (%s, %s, %s, %s, 768, %s, %s::vector(768), %s)
-                   ON CONFLICT(cache_key) DO UPDATE SET
-                     embedding = EXCLUDED.embedding,
-                     embedding_hash = EXCLUDED.embedding_hash,
-                     last_used_at = CURRENT_TIMESTAMP""",
-                (
-                    cache_key,
-                    content_hash,
-                    modality,
-                    model,
-                    preprocessing_version,
-                    vector_text,
-                    _hash_vector(vector),
-                ),
-            )
+            if dimensions == 512:
+                if modality != "audio_event":
+                    raise ValueError("512-dimensional cache entries must be audio_event")
+                cursor.execute(
+                    """INSERT INTO pl_audio_embedding_cache
+                       (cache_key, content_hash, modality, model_version, dimensions,
+                        preprocessing_version, embedding_512, embedding_hash)
+                       VALUES (%s, %s, %s, %s, 512, %s, %s::vector(512), %s)
+                       ON CONFLICT(cache_key) DO UPDATE SET
+                         embedding_512 = EXCLUDED.embedding_512,
+                         embedding_hash = EXCLUDED.embedding_hash,
+                         last_used_at = CURRENT_TIMESTAMP""",
+                    (
+                        cache_key,
+                        content_hash,
+                        modality,
+                        model,
+                        preprocessing_version,
+                        vector_text,
+                        _hash_vector(vector),
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """INSERT INTO pl_embedding_cache
+                       (cache_key, content_hash, modality, model_version, dimensions,
+                        preprocessing_version, embedding, embedding_hash)
+                       VALUES (%s, %s, %s, %s, 768, %s, %s::vector(768), %s)
+                       ON CONFLICT(cache_key) DO UPDATE SET
+                         embedding = EXCLUDED.embedding,
+                         embedding_hash = EXCLUDED.embedding_hash,
+                         last_used_at = CURRENT_TIMESTAMP""",
+                    (
+                        cache_key,
+                        content_hash,
+                        modality,
+                        model,
+                        preprocessing_version,
+                        vector_text,
+                        _hash_vector(vector),
+                    ),
+                )
 
     def migrate_embeddings_768(
         self,
@@ -742,33 +872,50 @@ class PostgresIndexStore:
         return stats
 
     def ensure_vector_index(self, dimensions: int) -> None:
-        if dimensions != 768:
-            raise ValueError("PostgreSQL HNSW indexing is fixed at 768 dimensions")
+        if dimensions not in (512, 768):
+            raise ValueError("PostgreSQL HNSW indexing supports 512 or 768 dimensions")
         with self.transaction(), self.db.cursor() as cursor:
             self._ensure_vector_index(cursor, dimensions)
 
     @staticmethod
     def _ensure_vector_index(cursor: Any, dimensions: int) -> None:
-        if dimensions != 768:
-            raise ValueError("PostgreSQL HNSW indexing is fixed at 768 dimensions")
-        cursor.execute(
-            """CREATE INDEX IF NOT EXISTS pl_embeddings_embedding_768_hnsw
-               ON pl_embeddings USING hnsw
-               (embedding_768 vector_cosine_ops)
-               WHERE embedding_768 IS NOT NULL"""
-        )
+        if dimensions == 768:
+            cursor.execute(
+                """CREATE INDEX IF NOT EXISTS pl_embeddings_embedding_768_hnsw
+                   ON pl_embeddings USING hnsw
+                   (embedding_768 vector_cosine_ops)
+                   WHERE embedding_768 IS NOT NULL"""
+            )
+        elif dimensions == 512:
+            cursor.execute(
+                """CREATE INDEX IF NOT EXISTS pl_audio_embeddings_embedding_512_hnsw
+                   ON pl_audio_embeddings USING hnsw
+                   (embedding_512 vector_cosine_ops)"""
+            )
+        else:
+            raise ValueError("PostgreSQL HNSW indexing supports 512 or 768 dimensions")
 
     def embedding_records(self, modality: str, model: str) -> list[tuple[str, list[float]]]:
         with self.db.cursor() as cursor:
-            cursor.execute(
-                """SELECT id, embedding_768 AS embedding
-                   FROM pl_embeddings
-                   WHERE modality = %s AND model_version = %s AND dimensions = 768
-                     AND embedding_768 IS NOT NULL
-                   ORDER BY id""",
-                (modality, model),
-            )
-            rows = cursor.fetchall()
+            if modality == "audio_event":
+                cursor.execute(
+                    """SELECT evidence_id AS id, embedding_512 AS embedding
+                       FROM pl_audio_embeddings
+                       WHERE model_version = %s AND dimensions = 512
+                       ORDER BY evidence_id""",
+                    (model,),
+                )
+                rows = cursor.fetchall()
+            else:
+                cursor.execute(
+                    """SELECT evidence_id AS id, embedding_768 AS embedding
+                       FROM pl_embeddings
+                       WHERE modality = %s AND model_version = %s AND dimensions = 768
+                         AND embedding_768 IS NOT NULL
+                       ORDER BY evidence_id""",
+                    (modality, model),
+                )
+                rows = cursor.fetchall()
         return [(row["id"], _parse_vector(row["embedding"])) for row in rows]
 
     @staticmethod
@@ -809,22 +956,33 @@ class PostgresIndexStore:
         if limit <= 0:
             return []
         dimensions = len(vector)
-        if dimensions != 768:
-            raise ValueError(f"Expected 768, got {dimensions}")
         vector_text = _vector_literal(vector)
-        vector_expression = "e.embedding_768"
-        vector_available = "e.embedding_768 IS NOT NULL"
         with self.db.cursor() as cursor:
-            cursor.execute(
-                f"""SELECT e.*,
-                          1 - ({vector_expression} <=> (%s::vector({dimensions}))) AS similarity
-                   FROM pl_embeddings e
-                   WHERE e.modality = %s AND e.model_version = %s AND e.dimensions = %s
-                     AND {vector_available}
-                   ORDER BY {vector_expression} <=> (%s::vector({dimensions}))
-                   LIMIT %s""",
-                (vector_text, modality, model, dimensions, vector_text, limit),
-            )
+            if dimensions == 512:
+                if modality != "audio_event":
+                    raise ValueError("512-dimensional vector search is limited to audio_event")
+                cursor.execute(
+                    """SELECT e.*,
+                              1 - (e.embedding_512 <=> (%s::vector(512))) AS similarity
+                       FROM pl_audio_embeddings e
+                       WHERE e.model_version = %s AND e.dimensions = 512
+                       ORDER BY e.embedding_512 <=> (%s::vector(512))
+                       LIMIT %s""",
+                    (vector_text, model, vector_text, limit),
+                )
+            elif dimensions == 768:
+                cursor.execute(
+                    """SELECT e.*,
+                              1 - (e.embedding_768 <=> (%s::vector(768))) AS similarity
+                       FROM pl_embeddings e
+                       WHERE e.modality = %s AND e.model_version = %s
+                         AND e.dimensions = 768 AND e.embedding_768 IS NOT NULL
+                       ORDER BY e.embedding_768 <=> (%s::vector(768))
+                       LIMIT %s""",
+                    (vector_text, modality, model, vector_text, limit),
+                )
+            else:
+                raise ValueError(f"Expected 512 or 768 dimensions, got {dimensions}")
             rows = cursor.fetchall()
         return [
             (self._embedding_evidence(row), float(row["similarity"]))
@@ -835,12 +993,25 @@ class PostgresIndexStore:
         with self.db.cursor() as cursor:
             cursor.execute("SELECT * FROM pl_embeddings WHERE id = %s", (embedding_id,))
             row = cursor.fetchone()
+            audio = False
+            if row is None:
+                cursor.execute(
+                    "SELECT * FROM pl_audio_embeddings WHERE id = %s",
+                    (embedding_id,),
+                )
+                row = cursor.fetchone()
+                audio = row is not None
         if row is None:
             return None
         vector = (
-            row.get("embedding_768")
-            if int(row.get("dimensions", 0)) == 768 and row.get("embedding_768") is not None
-            else row.get("embedding")
+            row.get("embedding_512")
+            if audio
+            else (
+                row.get("embedding_768")
+                if int(row.get("dimensions", 0)) == 768
+                and row.get("embedding_768") is not None
+                else row.get("embedding")
+            )
         )
         return {
             "embedding_id": row["id"],

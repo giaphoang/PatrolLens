@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
 from ..adapters.asr import ASRBackend, WordSpan
 from ..adapters.audio import AudioBackend
+from ..adapters.clap import AudioEmbeddingBackend, clap_intervals
 from ..adapters.media import (
     VisualKeyframe,
     deduplicate_keyframes,
@@ -53,6 +55,7 @@ class IngestionBackends:
     asr: ASRBackend | None = None
     ocr: OCRBackend | None = None
     audio: AudioBackend | None = None
+    audio_embedding: AudioEmbeddingBackend | None = None
     embedding: EmbeddingBackend | None = None
 
 
@@ -105,11 +108,19 @@ class IngestionPipeline:
                 f"Expected {self.config.embedding_dimensions}, got backend configuration "
                 f"{backend_dimensions}"
             )
+        audio_dimensions = getattr(self.backends.audio_embedding, "dimensions", 512)
+        if self.backends.audio_embedding and audio_dimensions != 512:
+            raise ValueError(
+                f"Expected 512 CLAP dimensions, got backend configuration {audio_dimensions}"
+            )
         self._keyframes: dict[str, list[VisualKeyframe]] = {}
         self._cache_stats = {
             "embedding_cache_hits": 0,
             "embedding_cache_misses": 0,
             "embedding_api_calls": 0,
+            "clap_cache_hits": 0,
+            "clap_cache_misses": 0,
+            "clap_model_calls": 0,
         }
         if vector_index is not None:
             self.vector_index = vector_index
@@ -125,7 +136,14 @@ class IngestionPipeline:
             "config": asdict(self.config),
             "backends": {
                 name: getattr(getattr(self.backends, name), "model_name", None)
-                for name in ("visual", "embedding", "asr", "ocr", "audio")
+                for name in (
+                    "visual",
+                    "embedding",
+                    "asr",
+                    "ocr",
+                    "audio",
+                    "audio_embedding",
+                )
             },
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:20]
@@ -141,7 +159,28 @@ class IngestionPipeline:
 
         self.store.upsert_asset(asset)
         completed = self.store.completed_ingestion_fingerprints(asset.id)
-        if completed and not force:
+        expected_clap = (
+            len(
+                clap_intervals(
+                    asset.duration_ms,
+                    window_ms=self.config.clap_window_ms,
+                    stride_ms=self.config.clap_stride_ms,
+                )
+            )
+            if self.backends.audio_embedding and asset.has_audio
+            else 0
+        )
+        existing_clap = (
+            self.store.evidence_count(
+                asset.id,
+                modality="audio_event",
+                source=self.backends.audio_embedding.model_name,
+            )
+            if expected_clap and self.backends.audio_embedding
+            else 0
+        )
+        needs_clap_backfill = expected_clap > existing_clap
+        if completed and not force and not needs_clap_backfill:
             preserved = self.store.ingestion_status(asset.id, completed[0])
             if preserved:
                 return {
@@ -149,6 +188,7 @@ class IngestionPipeline:
                     "skipped": True,
                     "preserved_completed": True,
                 }
+        clap_only_backfill = bool(completed and not force and needs_clap_backfill)
         if force:
             self.store.clear_asset_evidence(asset.id)
             self.store.supersede_ingestions(asset.id, fingerprint)
@@ -169,6 +209,7 @@ class IngestionPipeline:
             "visual": 0,
             "ocr": 0,
             "audio": 0,
+            "audio_embeddings": 0,
             "visual_vectors": 0,
             "video_embeddings": 0,
             "image_embeddings": 0,
@@ -178,12 +219,17 @@ class IngestionPipeline:
             "embedding_vectors": 0,
             "fingerprint": fingerprint,
             "skipped": False,
+            "additive_clap_backfill": clap_only_backfill,
         }
         self._cache_stats = {key: 0 for key in self._cache_stats}
         self.store.mark_ingestion(asset.id, fingerprint, "started", stats)
         try:
-            audio_path = self._audio_path(asset) if (self.backends.asr or self.backends.audio) else None
-            if self.backends.asr and audio_path:
+            audio_path = (
+                self._audio_path(asset)
+                if not clap_only_backfill and (self.backends.asr or self.backends.audio)
+                else None
+            )
+            if not clap_only_backfill and self.backends.asr and audio_path:
                 existing_transcripts = self.store.evidence_count(
                     asset.id,
                     modality="transcript",
@@ -198,11 +244,11 @@ class IngestionPipeline:
                         audio_path,
                     )
                     stats["embedding_vectors"] += transcript_vectors
-            if self.backends.visual or self.backends.ocr:
+            if not clap_only_backfill and (self.backends.visual or self.backends.ocr):
                 visual, ocr, vectors, ocr_vectors = self._ingest_frames(asset, segments)
                 stats.update(visual=visual, ocr=ocr, visual_vectors=vectors)
                 stats["embedding_vectors"] += ocr_vectors
-            if self.backends.embedding:
+            if not clap_only_backfill and self.backends.embedding:
                 if self.config.embed_images:
                     image_vectors, sampled, duplicates = self._ingest_image_embeddings(asset, segments)
                     stats["image_embeddings"] = image_vectors
@@ -210,7 +256,13 @@ class IngestionPipeline:
                     stats["visual_keyframes"] = image_vectors
                     stats["deduplicated_frames"] = duplicates
                     stats["embedding_vectors"] += stats["image_embeddings"]
-            if self.backends.audio and audio_path:
+            if self.backends.audio_embedding and asset.has_audio:
+                stats["audio_embeddings"] = self._ingest_audio_embeddings(
+                    asset,
+                    segments,
+                )
+                stats["embedding_vectors"] += stats["audio_embeddings"]
+            if not clap_only_backfill and self.backends.audio and audio_path:
                 stats["audio"] = self._ingest_audio(asset, segments, audio_path)
             rebuild = getattr(self.vector_index, "rebuild", None)
             if callable(rebuild) and self.backends.visual:
@@ -218,11 +270,22 @@ class IngestionPipeline:
             if callable(rebuild) and self.backends.embedding:
                 for modality in ("visual", "transcript", "ocr"):
                     rebuild(modality=modality, model=self.backends.embedding.model_name)
+            if callable(rebuild) and self.backends.audio_embedding:
+                rebuild(
+                    modality="audio_event",
+                    model=self.backends.audio_embedding.model_name,
+                )
             self.store.set_metadata("index_version", self.config.schema_version)
             self.store.set_metadata("ingestion_fingerprint", fingerprint)
             if self.backends.embedding:
                 self.store.set_metadata("embedding_model", self.backends.embedding.model_name)
                 self.store.set_metadata("embedding_dimensions", self.config.embedding_dimensions)
+            if self.backends.audio_embedding:
+                self.store.set_metadata(
+                    "audio_embedding_model",
+                    self.backends.audio_embedding.model_name,
+                )
+                self.store.set_metadata("audio_embedding_dimensions", 512)
             stats.update(self._cache_stats)
             self.store.mark_ingestion(asset.id, fingerprint, "complete", stats)
             return stats
@@ -762,6 +825,170 @@ class IngestionPipeline:
             total += vectors
         sampled = sum(item.frame_count for item in keyframes)
         return total, sampled, max(0, sampled - len(keyframes))
+
+    def _clap_cache_descriptor(
+        self,
+        asset: VideoAsset,
+        start_ms: int,
+        end_ms: int,
+    ) -> tuple[str, str, str]:
+        assert self.backends.audio_embedding is not None
+        preprocessing = (
+            f"{self.config.clap_preprocessing_version}:"
+            f"{self.config.clap_window_ms}:{self.config.clap_stride_ms}"
+        )
+        content_hash = hashlib.sha256(
+            "\0".join(
+                (asset.sha256, str(start_ms), str(end_ms), "48000", "mono")
+            ).encode("utf-8")
+        ).hexdigest()
+        cache_key = hashlib.sha256(
+            "\0".join(
+                (
+                    content_hash,
+                    "audio_event",
+                    self.backends.audio_embedding.model_name,
+                    "512",
+                    preprocessing,
+                )
+            ).encode("utf-8")
+        ).hexdigest()
+        return cache_key, content_hash, preprocessing
+
+    @staticmethod
+    def _validate_clap_embedding(vector: list[float]) -> list[float]:
+        if len(vector) != 512:
+            raise RuntimeError(f"Expected 512 CLAP dimensions, got {len(vector)}")
+        checked = [float(value) for value in vector]
+        if not all(math.isfinite(value) for value in checked):
+            raise RuntimeError("CLAP embedding contains non-finite values")
+        return checked
+
+    def _ingest_audio_embeddings(
+        self,
+        asset: VideoAsset,
+        segments: list[Segment],
+    ) -> int:
+        """Checkpoint 10-second CLAP windows independently of Gemini vectors."""
+
+        assert self.backends.audio_embedding is not None
+        intervals = clap_intervals(
+            asset.duration_ms,
+            window_ms=self.config.clap_window_ms,
+            stride_ms=self.config.clap_stride_ms,
+        )
+        descriptors = [
+            self._clap_cache_descriptor(asset, start_ms, end_ms)
+            for start_ms, end_ms in intervals
+        ]
+        cache_keys = [item[0] for item in descriptors]
+        cached = self.store.get_cached_embeddings(
+            cache_keys,
+            expected_dimensions=512,
+        )
+        vectors: list[list[float] | None] = [None] * len(intervals)
+        missing_indexes: list[int] = []
+        for index, cache_key in enumerate(cache_keys):
+            if cache_key in cached:
+                vectors[index] = self._validate_clap_embedding(cached[cache_key])
+                self._cache_stats["clap_cache_hits"] += 1
+            else:
+                missing_indexes.append(index)
+
+        if missing_indexes:
+            missing_intervals = [intervals[index] for index in missing_indexes]
+            encoded = iter(
+                self.backends.audio_embedding.encode_audio_windows(
+                    asset.path,
+                    missing_intervals,
+                )
+            )
+            for index in missing_indexes:
+                try:
+                    vector = self._validate_clap_embedding(next(encoded))
+                except StopIteration as exc:
+                    raise RuntimeError(
+                        "CLAP backend returned fewer vectors than requested windows"
+                    ) from exc
+                cache_key, content_hash, preprocessing = descriptors[index]
+                self.store.put_cached_embedding(
+                    cache_key,
+                    content_hash=content_hash,
+                    modality="audio_event",
+                    model=self.backends.audio_embedding.model_name,
+                    dimensions=512,
+                    preprocessing_version=preprocessing,
+                    vector=vector,
+                )
+                vectors[index] = vector
+                self._cache_stats["clap_cache_misses"] += 1
+                self._cache_stats["clap_model_calls"] += 1
+            try:
+                next(encoded)
+            except StopIteration:
+                pass
+            else:
+                raise RuntimeError("CLAP backend returned more vectors than requested windows")
+
+        if any(vector is None for vector in vectors):
+            raise RuntimeError("CLAP cache resolution left unresolved windows")
+
+        for offset in range(0, len(intervals), self.config.batch_size):
+            evidence_batch: list[Evidence] = []
+            embedding_batch: list[EmbeddingRecord] = []
+            for ordinal in range(offset, min(len(intervals), offset + self.config.batch_size)):
+                start_ms, end_ms = intervals[ordinal]
+                cache_key, content_hash, preprocessing = descriptors[ordinal]
+                evidence_id = f"{asset.id}-clap-{start_ms:010d}"
+                metadata = {
+                    "source_reference": asset.path,
+                    "source_hash": asset.sha256,
+                    "sample_rate": 48_000,
+                    "window_ms": self.config.clap_window_ms,
+                    "stride_ms": self.config.clap_stride_ms,
+                    "padded_samples": max(
+                        0,
+                        (self.config.clap_window_ms - (end_ms - start_ms)) * 48,
+                    ),
+                    "processing_version": self.config.schema_version,
+                    "preprocessing_version": preprocessing,
+                    "cache_key": cache_key,
+                    "content_hash": content_hash,
+                }
+                evidence = Evidence(
+                    id=evidence_id,
+                    video_id=asset.id,
+                    segment_id=self._segment_for(segments, start_ms),
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    modality="audio_event",
+                    content=(
+                        f"CLAP acoustic window from {start_ms / 1000:.3f}s "
+                        f"to {end_ms / 1000:.3f}s"
+                    ),
+                    confidence=1.0,
+                    source=self.backends.audio_embedding.model_name,
+                    metadata=metadata,
+                )
+                vector = vectors[ordinal]
+                assert vector is not None
+                evidence_batch.append(evidence)
+                embedding_batch.append(
+                    EmbeddingRecord(
+                        id=f"{evidence_id}-embedding",
+                        evidence_id=evidence_id,
+                        modality="audio_event",
+                        model=self.backends.audio_embedding.model_name,
+                        vector=vector,
+                        metadata={
+                            "embedding_input": "raw_audio",
+                            "embedding_dimensions": 512,
+                            **metadata,
+                        },
+                    )
+                )
+            self.store.add_evidence_and_embeddings(evidence_batch, embedding_batch)
+        return len(intervals)
 
     def _ingest_audio(
         self,

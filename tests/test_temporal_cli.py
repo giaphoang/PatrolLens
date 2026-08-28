@@ -62,7 +62,9 @@ def test_ingestion_profiles_exclude_removed_ocr_rms_and_yamnet_stacks():
 
     core_args = parser.parse_args([*common, "--profile", "core"])
     core = _ingestion_backends(core_args)
-    full = _ingestion_backends(parser.parse_args([*common, "--profile", "full"]))
+    full = _ingestion_backends(
+        parser.parse_args([*common, "--profile", "full", "--no-clap"])
+    )
 
     assert core.ocr is None
     assert core.audio is None

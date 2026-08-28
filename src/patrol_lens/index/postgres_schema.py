@@ -1,6 +1,6 @@
 """PostgreSQL schema for traceable evidence and pgvector embeddings."""
 
-POSTGRES_SCHEMA_VERSION = "1.2.0"
+POSTGRES_SCHEMA_VERSION = "1.3.0"
 
 POSTGRES_SCHEMA = """
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -85,6 +85,39 @@ CREATE INDEX IF NOT EXISTS pl_embeddings_lookup
 CREATE INDEX IF NOT EXISTS pl_embeddings_evidence
   ON pl_embeddings(evidence_id);
 
+-- CLAP audio lives in an independent 512-dimensional semantic space. Keep it
+-- out of the Gemini image/text table so incompatible vectors can never share
+-- an HNSW index or be compared by accident.
+CREATE TABLE IF NOT EXISTS pl_audio_embeddings (
+  id TEXT PRIMARY KEY,
+  evidence_id TEXT NOT NULL REFERENCES pl_evidence(id) ON DELETE CASCADE,
+  video_id TEXT NOT NULL REFERENCES pl_assets(id) ON DELETE CASCADE,
+  segment_id TEXT REFERENCES pl_segments(id) ON DELETE SET NULL,
+  start_ms BIGINT NOT NULL CHECK (start_ms >= 0),
+  end_ms BIGINT NOT NULL CHECK (end_ms >= start_ms),
+  modality TEXT NOT NULL CHECK (modality = 'audio_event'),
+  source_uri TEXT NOT NULL,
+  evidence_text TEXT NOT NULL,
+  evidence_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  evidence_source TEXT NOT NULL,
+  model_version TEXT NOT NULL,
+  confidence DOUBLE PRECISION NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  evidence_hash TEXT NOT NULL,
+  source_sha256 TEXT NOT NULL,
+  embedding_hash TEXT NOT NULL,
+  embedding_512 vector(512) NOT NULL,
+  dimensions INTEGER NOT NULL CHECK (dimensions = 512),
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (evidence_id, model_version)
+);
+CREATE INDEX IF NOT EXISTS pl_audio_embeddings_lookup
+  ON pl_audio_embeddings(model_version, dimensions);
+CREATE INDEX IF NOT EXISTS pl_audio_embeddings_evidence
+  ON pl_audio_embeddings(evidence_id);
+CREATE INDEX IF NOT EXISTS pl_audio_embeddings_embedding_512_hnsw
+  ON pl_audio_embeddings USING hnsw (embedding_512 vector_cosine_ops);
+
 -- Durable provider-response cache. It is intentionally independent from
 -- evidence foreign keys so a forced rerun can delete/rebuild evidence without
 -- paying to embed identical source content again.
@@ -102,6 +135,22 @@ CREATE TABLE IF NOT EXISTS pl_embedding_cache (
 );
 CREATE INDEX IF NOT EXISTS pl_embedding_cache_lookup
   ON pl_embedding_cache(content_hash, modality, model_version, dimensions, preprocessing_version);
+
+CREATE TABLE IF NOT EXISTS pl_audio_embedding_cache (
+  cache_key TEXT PRIMARY KEY,
+  content_hash TEXT NOT NULL,
+  modality TEXT NOT NULL CHECK (modality = 'audio_event'),
+  model_version TEXT NOT NULL,
+  dimensions INTEGER NOT NULL CHECK (dimensions = 512),
+  preprocessing_version TEXT NOT NULL,
+  embedding_512 vector(512) NOT NULL,
+  embedding_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_used_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS pl_audio_embedding_cache_lookup
+  ON pl_audio_embedding_cache
+  (content_hash, modality, model_version, dimensions, preprocessing_version);
 
 -- Existing installations created before the 768 migration need the same
 -- nullable legacy column and the fixed-width production column.
@@ -168,12 +217,34 @@ CREATE TRIGGER pl_embeddings_provenance_guard
   BEFORE INSERT OR UPDATE ON pl_embeddings
   FOR EACH ROW EXECUTE FUNCTION pl_validate_embedding_provenance();
 
+DROP TRIGGER IF EXISTS pl_audio_embeddings_provenance_guard ON pl_audio_embeddings;
+CREATE TRIGGER pl_audio_embeddings_provenance_guard
+  BEFORE INSERT OR UPDATE ON pl_audio_embeddings
+  FOR EACH ROW EXECUTE FUNCTION pl_validate_embedding_provenance();
+
 CREATE OR REPLACE FUNCTION pl_sync_embedding_provenance()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
   UPDATE pl_embeddings p
+     SET video_id = NEW.video_id,
+         segment_id = NEW.segment_id,
+         start_ms = NEW.start_ms,
+         end_ms = NEW.end_ms,
+         modality = NEW.modality,
+         source_uri = COALESCE(NULLIF(NEW.metadata->>'source_uri', ''),
+                               NULLIF(NEW.metadata->>'media_path', ''),
+                               NULLIF(NEW.metadata->>'frame_path', ''),
+                               (SELECT source_uri FROM pl_assets WHERE id = NEW.video_id)),
+         evidence_text = NEW.content,
+         evidence_metadata = NEW.metadata,
+         evidence_source = NEW.source,
+         confidence = NEW.confidence,
+         evidence_hash = NEW.evidence_hash,
+         source_sha256 = (SELECT sha256 FROM pl_assets WHERE id = NEW.video_id)
+   WHERE p.evidence_id = NEW.id;
+  UPDATE pl_audio_embeddings p
      SET video_id = NEW.video_id,
          segment_id = NEW.segment_id,
          start_ms = NEW.start_ms,
@@ -205,6 +276,13 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   UPDATE pl_embeddings p
+     SET source_uri = COALESCE(NULLIF(e.metadata->>'source_uri', ''),
+                               NULLIF(e.metadata->>'media_path', ''),
+                               NULLIF(e.metadata->>'frame_path', ''), NEW.source_uri),
+         source_sha256 = NEW.sha256
+    FROM pl_evidence e
+   WHERE p.evidence_id = e.id AND e.video_id = NEW.id;
+  UPDATE pl_audio_embeddings p
      SET source_uri = COALESCE(NULLIF(e.metadata->>'source_uri', ''),
                                NULLIF(e.metadata->>'media_path', ''),
                                NULLIF(e.metadata->>'frame_path', ''), NEW.source_uri),

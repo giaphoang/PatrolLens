@@ -231,17 +231,22 @@ class IndexStore:
         for row in rows:
             yield self._evidence(row)
 
-    def evidence_count(self, video_id: str, *, modality: str | None = None) -> int:
+    def evidence_count(
+        self,
+        video_id: str,
+        *,
+        modality: str | None = None,
+        source: str | None = None,
+    ) -> int:
+        sql = "SELECT COUNT(*) AS count FROM evidence WHERE video_id = ?"
+        params: list[Any] = [video_id]
         if modality:
-            row = self.db.execute(
-                "SELECT COUNT(*) AS count FROM evidence WHERE video_id = ? AND modality = ?",
-                (video_id, modality),
-            ).fetchone()
-        else:
-            row = self.db.execute(
-                "SELECT COUNT(*) AS count FROM evidence WHERE video_id = ?",
-                (video_id,),
-            ).fetchone()
+            sql += " AND modality = ?"
+            params.append(modality)
+        if source:
+            sql += " AND source = ?"
+            params.append(source)
+        row = self.db.execute(sql, params).fetchone()
         return int(row["count"])
 
     def top_evidence(self, modality: str, *, limit: int = 60) -> list[tuple[Evidence, float]]:

@@ -17,6 +17,7 @@ from .adapters.asr import (
     OpenRouterASR,
 )
 from .adapters.audio import SileroVADAnalyzer
+from .adapters.clap import DEFAULT_CLAP_MODEL, ClapCoreMLBackend
 from .adapters.media import extract_audio, iter_video_files, probe_video
 from .adapters.openrouter import (
     EmbeddingDimensionError,
@@ -139,9 +140,41 @@ def _embedding_canary(embedding: OpenRouterEmbeddingClient) -> None:
         raise EmbeddingDimensionError(embedding.dimensions, len(vector))
 
 
+def _clap_backend(
+    args: argparse.Namespace,
+    *,
+    required: bool,
+) -> ClapCoreMLBackend | None:
+    root = Path(args.clap_model_root).expanduser().resolve()
+    backend = ClapCoreMLBackend(
+        root / "model" / "clap_audio_encoder.mlpackage",
+        root / "model" / "text_model.onnx",
+        root / "tokenizer",
+        model_name=args.clap_model,
+        compute_units=args.clap_compute_units,
+    )
+    paths_exist = all(
+        path.exists()
+        for path in (
+            backend.audio_model_path,
+            backend.text_model_path,
+            backend.tokenizer_path,
+        )
+    )
+    if not required and not paths_exist:
+        return None
+    backend.validate_setup()
+    return backend
+
+
 def _ingestion_backends(args: argparse.Namespace) -> IngestionBackends:
     if args.profile == "metadata":
         return IngestionBackends()
+    use_clap = (
+        not args.no_audio
+        and (args.clap if args.clap is not None else args.profile == "full")
+    )
+    audio_embedding = _clap_backend(args, required=True) if use_clap else None
     asr = None if args.no_asr else _asr_backend(args)
     embedding = None if args.no_embeddings else _embedding(args)
     if embedding is not None:
@@ -156,12 +189,30 @@ def _ingestion_backends(args: argparse.Namespace) -> IngestionBackends:
         use_silero = args.silero_vad if args.silero_vad is not None else args.profile == "full"
         if use_silero:
             audio = SileroVADAnalyzer()
-    return IngestionBackends(visual=visual, embedding=embedding, asr=asr, audio=audio)
+    return IngestionBackends(
+        visual=visual,
+        embedding=embedding,
+        asr=asr,
+        audio=audio,
+        audio_embedding=audio_embedding,
+    )
 
 
 def cmd_ingest(args: argparse.Namespace) -> None:
-    if min(args.frame_fps, args.window_s, args.stride_s, args.audio_window_s, args.audio_stride_s) <= 0:
+    if min(
+        args.frame_fps,
+        args.window_s,
+        args.stride_s,
+        args.audio_window_s,
+        args.audio_stride_s,
+        args.clap_window_s,
+        args.clap_stride_s,
+    ) <= 0:
         raise ValueError("frame rate, windows, and strides must be positive")
+    if args.clap_window_s != 10.0:
+        raise ValueError("larger_clap_general CoreML requires --clap-window-s 10")
+    if args.clap_stride_s > args.clap_window_s:
+        raise ValueError("--clap-stride-s cannot exceed --clap-window-s")
     if args.batch_size <= 0:
         raise ValueError("--batch-size must be positive")
     if args.embedding_batch_size <= 0:
@@ -181,6 +232,8 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             frame_step_ms=max(1, round(1000 / args.frame_fps)),
             audio_window_ms=round(args.audio_window_s * 1000),
             audio_stride_ms=round(args.audio_stride_s * 1000),
+            clap_window_ms=round(args.clap_window_s * 1000),
+            clap_stride_ms=round(args.clap_stride_s * 1000),
             batch_size=args.batch_size,
             embedding_dimensions=args.embedding_dimensions,
             embedding_batch_size=args.embedding_batch_size,
@@ -265,6 +318,10 @@ def _build_retriever(
     else:
         planner = HeuristicQueryPlanner()
     embedding = None if args.no_embeddings else _embedding(args)
+    audio_encoder = None if args.clap is False else _clap_backend(
+        args,
+        required=args.clap is True,
+    )
     visual = (
         None
         if args.no_visual
@@ -282,6 +339,7 @@ def _build_retriever(
         planner=planner,
         visual_encoder=visual,
         semantic_encoder=embedding,
+        audio_encoder=audio_encoder,
         vector_index=_vector_index(store),
         config=config,
     )
@@ -347,6 +405,8 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
         "faster-whisper": "faster_whisper",
         "SigLIP2/transformers": "transformers",
         "Silero VAD": "silero_vad",
+        "CoreML CLAP": "coremltools",
+        "CLAP text/ONNX": "onnxruntime",
     }
     def installed(module: str) -> bool:
         try:
@@ -354,6 +414,12 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
         except (ImportError, ModuleNotFoundError):
             return False
 
+    clap_root = Path(
+        os.getenv(
+            "PATROLLENS_CLAP_MODEL_ROOT",
+            ".patrol-lens-models/larger_clap_general_coreml",
+        )
+    ).expanduser().resolve()
     _print(
         {
             "ffmpeg": shutil.which("ffmpeg"),
@@ -371,6 +437,18 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
                 "PATROLLENS_ASR_MODEL",
                 DEFAULT_OPENROUTER_ASR_MODEL,
             ),
+            "clap_model": os.getenv("PATROLLENS_CLAP_MODEL", DEFAULT_CLAP_MODEL),
+            "clap_compute_units": os.getenv(
+                "PATROLLENS_CLAP_COMPUTE_UNITS",
+                "cpu_only",
+            ),
+            "clap_artifacts": {
+                "audio_coreml": (
+                    clap_root / "model" / "clap_audio_encoder.mlpackage"
+                ).exists(),
+                "text_onnx": (clap_root / "model" / "text_model.onnx").is_file(),
+                "tokenizer": (clap_root / "tokenizer").is_dir(),
+            },
             "python_modules": {name: installed(module) for name, module in modules.items()},
         }
     )
@@ -436,11 +514,22 @@ def _add_ingest_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-asr", action="store_true")
     parser.add_argument("--no-audio", action="store_true")
     parser.add_argument("--silero-vad", action=argparse.BooleanOptionalAction, default=None)
+    _add_clap_arguments(parser)
     parser.add_argument("--window-s", type=float, default=16.0)
     parser.add_argument("--stride-s", type=float, default=8.0)
     parser.add_argument("--frame-fps", type=float, default=1.0)
     parser.add_argument("--audio-window-s", type=float, default=4.0)
     parser.add_argument("--audio-stride-s", type=float, default=2.0)
+    parser.add_argument(
+        "--clap-window-s",
+        type=float,
+        default=float(os.getenv("PATROLLENS_CLAP_WINDOW_SECONDS", "10")),
+    )
+    parser.add_argument(
+        "--clap-stride-s",
+        type=float,
+        default=float(os.getenv("PATROLLENS_CLAP_STRIDE_SECONDS", "5")),
+    )
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--force", action="store_true")
     parser.set_defaults(func=cmd_ingest)
@@ -459,12 +548,43 @@ def _add_retrieval_arguments(parser: argparse.ArgumentParser) -> None:
         default=int(os.getenv("PATROLLENS_EMBEDDING_DIMENSIONS", "768")),
     )
     parser.add_argument("--no-embeddings", action="store_true")
+    _add_clap_arguments(parser)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--top-k", type=int, default=12)
     parser.add_argument("--branch-k", type=int, default=60)
     parser.add_argument("--temporal-tolerance-s", type=float, default=4.0)
     parser.add_argument("--merge-gap-s", type=float, default=3.0)
     parser.add_argument("--candidate-padding-s", type=float, default=5.0)
+
+
+def _add_clap_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--clap",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Enable larger_clap_general audio indexing/search; full ingestion "
+            "enables it by default and retrieval auto-detects installed artifacts"
+        ),
+    )
+    parser.add_argument(
+        "--clap-model-root",
+        default=os.getenv(
+            "PATROLLENS_CLAP_MODEL_ROOT",
+            ".patrol-lens-models/larger_clap_general_coreml",
+        ),
+    )
+    parser.add_argument(
+        "--clap-model",
+        default=os.getenv("PATROLLENS_CLAP_MODEL", DEFAULT_CLAP_MODEL),
+        help="CLAP model namespace stored with 512-d vectors",
+    )
+    parser.add_argument(
+        "--clap-compute-units",
+        choices=["cpu_only", "cpu_and_gpu", "all"],
+        default=os.getenv("PATROLLENS_CLAP_COMPUTE_UNITS", "cpu_only"),
+        help="CoreML execution policy; CPU-only is the safe default on macOS 26",
+    )
 
 
 def _add_openrouter_transport_arguments(parser: argparse.ArgumentParser) -> None:

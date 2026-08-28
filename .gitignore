@@ -1,4 +1,5 @@
 .patrol-lens/
+.patrol-lens-models/
 .venv/
 __pycache__/
 *.py[cod]

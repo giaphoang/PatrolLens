@@ -19,13 +19,14 @@ flowchart LR
         CH["Scene/change detection<br/>keyframes + pHash dedup"]
         GE["OpenRouter<br/>Gemini Embedding 2<br/>unique images + ASR text · 768-d"]
         EXACT["OpenRouter Whisper<br/>exact searchable speech"]
+        CLAP["larger_clap_general CoreML<br/>10 s audio · 512-d"]
         CUES["Optional Silero VAD<br/>speech-presence cues"]
         IDX["Timestamped evidence<br/>SQLite FTS5 + pgvector/FAISS"]
     end
 
     subgraph RET["2. Cheap query-time retrieval"]
         PLAN["Gemini query planner"]
-        PAR["Parallel visual / ASR / speech search"]
+        PAR["Parallel visual / ASR / CLAP audio search"]
         FUSE["Temporal join + weighted RRF"]
     end
 
@@ -43,6 +44,7 @@ flowchart LR
     V --> FF
     FF --> CH --> GE --> IDX
     FF --> EXACT --> IDX
+    FF --> CLAP --> IDX
     FF --> CUES --> IDX
     Q["Investigator query"] --> PLAN --> PAR
     IDX --> PAR --> FUSE --> AGENT
@@ -64,23 +66,26 @@ Retrieval scores create candidates only. They never become final evidence confid
 | Component | Evidence it creates | Queries it directly supports |
 |---|---|---|
 | ASR | Timestamped spoken words | Miranda rights, quoted speech, names, commands |
+| larger_clap_general (`full`) | Timestamped 512-d raw-audio semantics | Shouting, sirens, gunshots, barking, overlapping acoustic events |
 | Silero VAD (`full`) | Timestamped speech presence | Speech/non-speech candidate filtering |
 | Gemini Embedding 2 | Shared 768-d image/text semantic space | Clothing, vehicles, scenes, transcript meaning |
 | Gemini clips | Motion and cross-modal association | Handcuffing, traffic-stop sequence, who shouted, event causality |
 
-ASR cannot establish a visual action, and speech presence does not prove who is
-speaking. Gemini verifies those cross-modal claims after coarse retrieval. New
-ingestion does not run OCR, loudness/pitch analysis, or general audio-event
-classification; historical rows from older indexes remain searchable.
+ASR cannot establish a visual action, and a CLAP match does not prove who made
+the sound. Gemini verifies those cross-modal claims after coarse retrieval. New
+ingestion does not run OCR or handcrafted loudness/pitch analysis; historical
+rows from older indexes remain searchable.
 
 ## Quick start
 
 Prerequisites: Python 3.11+ and FFmpeg/FFprobe.
 
-Install the production PostgreSQL/OpenRouter stack and optional Silero VAD:
+Install the production PostgreSQL/OpenRouter stack, then install the paired
+CoreML/ONNX CLAP runtime and model artifacts on Apple Silicon:
 
 ```bash
 uv sync --extra dev --extra full
+scripts/setup_clap_coreml_macos.sh
 source .venv/bin/activate
 patrol-lens doctor
 ```
@@ -141,11 +146,23 @@ indexing plus OpenRouter `openai/whisper-large-v3-turbo` segment transcripts:
 patrol-lens ingest videos_corpus --index .patrol-lens --profile core
 ```
 
-Full profile adds Silero VAD speech-presence evidence:
+Full profile adds local larger_clap_general CoreML audio embeddings and Silero
+VAD speech-presence evidence. CLAP decodes the original video directly at 48
+kHz; it never uses Whisper's 16 kHz WAV:
 
 ```bash
 patrol-lens ingest videos_corpus --index .patrol-lens --profile full
 ```
+
+Use `--clap` to add CLAP to the core profile or `--no-clap` to disable it in
+the full profile. CLAP is fixed at a 10-second window; the default 5-second
+stride can be changed with `--clap-stride-s`.
+
+`PATROLLENS_CLAP_COMPUTE_UNITS=cpu_only` is the safe default on this macOS 26
+M3 environment and measured about 21 ms steady-state per window. The downloaded
+artifact advertises `cpu_and_gpu`, but Apple's MPSGraph compiler aborts on this
+host; use `--clap-compute-units cpu_and_gpu` only after a canary succeeds on the
+target OS/runtime.
 
 `--no-embedding-images` disables hosted keyframe vectors while retaining ASR
 text embeddings. `--no-embeddings` selects the local SigLIP2 visual path and
@@ -159,6 +176,12 @@ patrol-lens ingest videos_corpus --index .patrol-lens-smoke --profile metadata
 ```
 
 Ingestion is fingerprinted and restartable. Re-run the same command against the same `--index` to continue: completed videos are skipped, while failed or incomplete videos are retried. Each provider response is validated, saved immediately in a content-hash cache, and then attached to evidence in small committed batches. A retry reuses cached vectors instead of paying to embed completed items again. Do not use `--force` when continuing. Changing the embedding model, dimensions, or extraction settings creates a new fingerprint; use `--force` only for an intentional evidence rebuild (cached vectors are still reused when their full cache key matches).
+
+When CLAP is first enabled on an existing completed corpus, ingestion performs
+an additive CLAP-only backfill. Existing transcripts, visual vectors, and
+evidence are preserved. Every 10-second audio vector is checkpointed before the
+next window, so an interruption resumes from uncached windows without rerunning
+the completed audio model calls.
 
 Changing the ASR backend does not reprocess completed videos. On an incomplete
 video, existing transcript evidence is reused and the remaining modalities
@@ -190,26 +213,30 @@ patrol-lens ingest videos_corpus \
   --backend postgres \
   --database-url "$PATROLLENS_DATABASE_URL" \
   --index .patrol-lens-artifacts \
-  --profile core
+  --profile full
 ```
 
 Use the same `--backend postgres --database-url ...` flags for `retrieve`, `search`, and `evaluate`. `--index` remains the local artifact root for extracted frames, audio, and agent memory; the PostgreSQL DSN is only for the canonical evidence/index database.
 
 ```mermaid
 flowchart LR
-    RAW["Raw video"] --> LOCAL["Local scene/keyframe dedup\nASR · optional speech cues"]
+    RAW["Raw video"] --> LOCAL["Local scene/keyframe dedup\nASR · CLAP · optional VAD"]
     LOCAL --> E["pl_evidence\ncontent · timestamps · metadata\nevidence_hash"]
     E --> GE["Gemini Embedding 2\nunique images + ASR text\n768-d only"]
+    E --> CE["larger_clap_general\nraw audio · 512-d only"]
     GE --> CACHE["pl_embedding_cache\ncontent-addressed checkpoint"]
+    CE --> ACACHE["pl_audio_embedding_cache\nwindow checkpoint"]
     E --> TX["One ACID transaction"]
     CACHE --> TX
+    ACACHE --> TX
     TX --> V["pl_embeddings\npgvector + duplicated provenance\nFK evidence_id"]
+    TX --> AV["pl_audio_embeddings\nvector(512) + provenance\nFK evidence_id"]
     Q["Query embedding"] --> PG["pgvector cosine search"]
     PG --> ROW["PostgreSQL embedding row"]
     ROW --> REPLAY["source_uri + [start,end]\nevidence + source hashes\nreplay / verify"]
 ```
 
-Every PostgreSQL embedding is inserted with `INSERT ... SELECT` from its canonical evidence and asset rows. The `pl_embeddings` row stores `evidence_id`, `video_id`, timestamps, modality, `source_uri`, evidence text/metadata, model version, confidence, `evidence_hash`, `source_sha256`, and `embedding_hash`. A foreign key, provenance trigger, and transactional ingestion path prevent orphan or mismatched embeddings. PostgreSQL WAL/PITR then covers both the vector and its audit metadata together.
+Every PostgreSQL embedding is inserted with `INSERT ... SELECT` from its canonical evidence and asset rows. Gemini vectors use `pl_embeddings.embedding_768`; CLAP uses the separate `pl_audio_embeddings.embedding_512` HNSW index. Both rows carry replayable provenance and are guarded by foreign keys and provenance triggers. The two semantic spaces are never compared directly; weighted RRF combines their ranked hits.
 
 ### 2. Inspect coarse candidates
 
@@ -264,11 +291,12 @@ Each accepted result contains:
 
 ## How a 90-minute video is handled
 
-At the defaults, one 90-minute video retains 674 overlapping 16-second temporal windows at an 8-second stride for joining and recall, and samples about 5,400 frames at 1 FPS. Those windows are never uploaded for embedding. Adjacent visually equivalent frames become one canonical keyframe whose evidence interval is extended; only unique keyframes are remotely embedded. The audio track is decoded once and split into checkpointed five-minute chunks for OpenRouter transcription; the full profile also reuses it locally for Silero VAD.
+At the defaults, one 90-minute video retains 674 overlapping 16-second temporal windows at an 8-second stride for joining and recall, samples about 5,400 frames at 1 FPS, and produces 1,079 CLAP windows at 10 seconds / 5-second stride. Temporal windows are never uploaded for embedding. CLAP streams 48 kHz mono float32 directly from the original video and retains only the overlap buffer; it does not write another full-length WAV. The separate 16 kHz extraction remains for OpenRouter transcription and optional Silero VAD.
 
 At query time, exact FTS5/Postgres text search is retained for literal ASR
-strings and any historical evidence rows, while Gemini Embedding 2 query
-vectors search semantic transcript and visual evidence. FAISS or pgvector
+strings and any historical evidence rows. Gemini Embedding 2 query vectors
+search semantic transcript/visual evidence, while the paired CLAP ONNX text
+encoder searches only the 512-d raw-audio index. FAISS or pgvector
 reduces the full corpus to roughly 5–20 candidate intervals. Gemini receives
 only bounded observations—at most 12 frames, 30 seconds of audio, or 20 seconds
 of video per action—with a five-turn default budget. Memory grows as compact
@@ -324,7 +352,7 @@ The evaluator reports recall@K and mean best temporal IoU. Production evaluation
 uv run --extra dev pytest -q
 ```
 
-Tests cover normalized storage, 768-d guards, keyframe deduplication, durable cache reuse, FTS/vector retrieval, multimodal temporal joining, active-perception control, restartable ingestion, TimeLens2 gating, CLI contracts, and real FFmpeg extraction.
+Tests cover normalized storage, independent 768-d/512-d guards, CLAP windowing and checkpoint recovery, additive audio backfill, keyframe deduplication, FTS/vector retrieval, multimodal temporal joining, active-perception control, restartable ingestion, TimeLens2 gating, CLI contracts, and real FFmpeg extraction.
 
 ## Privacy boundary
 
@@ -332,6 +360,7 @@ Raw corpus video, extracted transcripts, indexes, and agent memory remain local.
 Offline indexing sends deduplicated keyframe images, transcript text, and
 five-minute audio chunks to OpenRouter. Query-time search sends the investigator
 query, and active search sends only selected short observations after coarse
-retrieval. Deployments still need agency-specific access control, encryption,
+retrieval. CLAP audio and text inference remains local on the M3. Deployments
+still need agency-specific access control, encryption,
 retention, redaction, audit logging, provider data-handling review, and legal
 review; those are intentionally outside this prototype.

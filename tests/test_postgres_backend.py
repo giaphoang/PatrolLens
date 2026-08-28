@@ -28,6 +28,10 @@ def test_postgres_schema_contains_traceability_columns_and_guards():
         "embedding_768 vector(768)",
         "pl_embedding_cache",
         "dimensions INTEGER NOT NULL CHECK (dimensions = 768)",
+        "pl_audio_embeddings",
+        "embedding_512 vector(512)",
+        "pl_audio_embedding_cache",
+        "dimensions INTEGER NOT NULL CHECK (dimensions = 512)",
     ):
         assert column in POSTGRES_SCHEMA
     assert "REFERENCES pl_evidence(id) ON DELETE CASCADE" in POSTGRES_SCHEMA

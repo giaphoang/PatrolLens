@@ -27,7 +27,7 @@ flowchart LR
     V["38 bodycam videos<br/>≤ 90 min each"]
 
     subgraph OFF["1. Offline multimodal ingestion"]
-        E["OpenRouter Whisper / optional Silero VAD"]
+        E["OpenRouter Whisper / CLAP CoreML / optional Silero VAD"]
         SC["Local scene/change detection\nkeyframes + pHash dedup"]
         GE["OpenRouter Gemini Embedding 2\nunique images + ASR text · 768-d"]
         IDX["Timestamped evidence index"]
@@ -69,20 +69,26 @@ SQLite/FAISS remains useful for a dependency-light local smoke test. The product
 flowchart LR
     R["Raw source video"] --> X["FFmpeg / local model extraction"]
     X --> E["Canonical pl_evidence\ncontent + timestamp + metadata + hash"]
-    E --> G["Gemini Embedding 2\nunique images + ASR text\n768-d only"]
-    G --> C["pl_embedding_cache\ndurable content checkpoint"]
+    E --> G["Gemini Embedding 2\nunique images + ASR text\n768-d"]
+    E --> CLAP["larger_clap_general CoreML\nraw audio windows · 512-d"]
+    G --> C["pl_embedding_cache\n768-d checkpoint"]
+    CLAP --> AC["pl_audio_embedding_cache\n512-d checkpoint"]
     E --> T["ACID evidence/embedding transaction"]
     C --> T
+    AC --> T
     T --> V["pl_embeddings\nvector + copied provenance + evidence FK"]
+    T --> AV["pl_audio_embeddings\nvector(512) + copied provenance + evidence FK"]
     Q["Query vector"] --> S["pgvector cosine ORDER BY"]
     S --> V
+    S --> AV
     V --> P["source_uri + timestamps + raw evidence"]
+    AV --> P
     P --> A["Replay / Gemini verification / audit"]
 ```
 
 `pl_embeddings` intentionally duplicates the fields required to replay a hit: `video_id`, `segment_id`, `start_ms`, `end_ms`, `modality`, `source_uri`, `evidence_text`, `evidence_metadata`, `evidence_source`, `model_version`, `confidence`, `evidence_hash`, `source_sha256`, and `embedding_hash`. It also retains a foreign key to `pl_evidence`. The write path obtains the duplicated fields with `INSERT ... SELECT` from `pl_evidence JOIN pl_assets`, so an embedding cannot be created for missing evidence or an unknown video.
 
-The ingestion pipeline validates every provider response and immediately commits it to `pl_embedding_cache`, keyed by content hash, modality, model, dimensions, and preprocessing version. It then calls `add_evidence_and_embeddings` in small batches. A failed evidence insert can therefore be retried without another provider call. A database trigger validates duplicated provenance on direct writes and synchronizes it when canonical evidence or asset metadata changes. New PostgreSQL reads and writes are fixed at 768 dimensions and use the partial `pl_embeddings_embedding_768_hnsw` cosine index; legacy vectors remain audit-only during migration.
+The ingestion pipeline validates every response and immediately commits it to a dimension-specific cache keyed by content hash, modality, model, dimensions, and preprocessing version. Gemini image/text vectors use `pl_embedding_cache` and `pl_embeddings.embedding_768`; CLAP audio vectors use `pl_audio_embedding_cache` and `pl_audio_embeddings.embedding_512`. Each space has an independent cosine HNSW index. A database trigger validates duplicated provenance on direct writes and synchronizes it when canonical evidence or asset metadata changes. A failed evidence insert can therefore be retried without another model call.
 
 At retrieval time, pgvector returns the embedding row directly. The adapter reconstructs `Evidence` from that row and attaches `embedding_id`, `source_uri`, `model_version`, `evidence_hash`, `source_sha256`, and `embedding_hash` to the returned metadata. A caller can use `get_embedding_trace(embedding_id)` to retrieve the complete vector/provenance record for replay or audit.
 
@@ -93,6 +99,7 @@ flowchart LR
     V["Bodycam MP4"] --> PROBE["FFprobe<br/>duration · FPS · streams"]
     PROBE --> SEG["Overlapping temporal windows<br/>local join context only"]
     PROBE --> AUDIO["Decode 16 kHz mono once"]
+    PROBE --> CLAP_PCM["Stream 48 kHz mono float32\nfrom original video"]
     PROBE --> FRAMES["Decode frame sequence once<br/>~1 FPS"]
 
     FRAMES --> CHANGE["Perceptual scene/change detection"]
@@ -100,6 +107,8 @@ flowchart LR
     KEYFRAMES --> DEDUP["pHash visual dedup<br/>extend equivalent intervals"]
     AUDIO --> ASR["OpenRouter STT<br/>Whisper Large V3 Turbo"]
     AUDIO --> VAD["Silero VAD<br/>full profile only"]
+    CLAP_PCM --> CLAP_WIN["10 s windows · 5 s stride"]
+    CLAP_WIN --> CLAP_EMB["larger_clap_general CoreML INT8<br/>safe CPU default · 512-d"]
     DEDUP --> IMAGE_EMB["Gemini Embedding 2<br/>unique image embeddings · 768-d"]
 
     ASR --> FTS["Postgres FTS / SQLite FTS5"]
@@ -108,9 +117,12 @@ flowchart LR
     IMAGE_EMB --> CACHE["Content-hash embedding cache"]
     TEXT_EMB --> CACHE
     CACHE --> VEC["pgvector / FAISS<br/>768-d semantic vectors"]
+    CLAP_EMB --> ACACHE["Audio content-hash cache"]
+    ACACHE --> AVEC["pgvector / exact search<br/>512-d audio vectors"]
     FTS --> META["Canonical timestamps + provenance"]
     SQL --> META
     VEC --> META
+    AVEC --> META
 ```
 
 ### Why these components exist
@@ -119,12 +131,13 @@ flowchart LR
 |---|---|---|
 | Visual appearance | Gemini Embedding 2 | Shared semantic search over locally deduplicated keyframe images |
 | Spoken language | OpenRouter Whisper Large V3 Turbo | Checkpointed segment timestamps for Miranda rights, commands, names, and quotations |
+| Acoustic semantics (full profile) | LAION larger_clap_general CoreML + paired ONNX text encoder | Open-vocabulary retrieval for shouting, sirens, gunshots, barking, music, and mixed acoustic events |
 | Speech presence (full profile) | Silero VAD | Optional timestamped speech/non-speech evidence |
 | Exact text lookup | Postgres FTS / SQLite FTS5 | Fast ASR transcript retrieval, preserving literal strings |
-| Semantic lookup | pgvector / FAISS | Cosine/IP search over 768-d image and transcript vectors |
+| Semantic lookup | pgvector / FAISS | Independent cosine search over Gemini 768-d image/text and CLAP 512-d audio vectors |
 | Provenance | PostgreSQL | Model, confidence, source reference/hash, exact time span, and processing fingerprint |
 
-Processing windows organize temporal joining; they are not remote embedding units. ASR utterances, canonical visual intervals, and optional Silero speech-presence windows retain their own timestamps. Five-minute WAV chunks reach OpenRouter only for transcription; raw video reaches Gemini only through bounded tools after coarse retrieval. Current ingestion deliberately omits OCR, RMS/pitch analysis, and general audio-event classification.
+Processing windows organize temporal joining; they are not remote embedding units. ASR utterances, canonical visual intervals, CLAP acoustic windows, and optional Silero speech-presence windows retain their own timestamps. Five-minute 16 kHz WAV chunks reach OpenRouter only for transcription. CLAP separately streams 48 kHz audio from the original video into a fixed 10-second CoreML input and never persists a second full-length WAV. Raw video reaches Gemini only through bounded tools after coarse retrieval. Current ingestion deliberately omits OCR and handcrafted RMS/pitch analysis.
 
 ### Long-video behavior
 
@@ -134,7 +147,7 @@ $$
 N = \left\lceil\frac{D-W}{S}\right\rceil + 1
 $$
 
-For 90 minutes, `W=16 s`, and `S=8 s`, the implementation retains 674 local temporal windows. It does not embed them. Frame decoding is a single sequential FFmpeg pass, adjacent equivalent frames are collapsed into canonical intervals, and audio is decoded once. Provider responses are dimension-checked and cached before evidence insertion, so a failed run resumes without re-embedding completed content.
+For 90 minutes, `W=16 s`, and `S=8 s`, the implementation retains 674 local temporal windows. It does not embed them. The full profile additionally creates 1,079 CLAP audio windows at 10 seconds / 5-second stride. Frame decoding is a single sequential FFmpeg pass, adjacent equivalent frames are collapsed into canonical intervals, and CLAP audio is streamed with only its overlap buffer retained. Every 512-d result is cached before evidence insertion, so a failed run resumes from uncached windows. Enabling CLAP on an already completed corpus performs an additive audio-only backfill without re-running ASR or visual indexing.
 
 There is no “replication worker” in this design. Horizontal ingestion workers may claim different videos, but SQLite/FAISS/pgvector replication is a deployment concern, not a semantic pipeline stage. Each video is fingerprinted by extraction settings and model namespaces: re-running the same command skips completed videos, while a failed video can be retried without `--force`; changing model, dimensions, or chunk settings intentionally selects a new ingestion fingerprint.
 
@@ -146,12 +159,12 @@ flowchart TD
     PLAN --> VQ["Visual phrases"]
     PLAN --> TQ["Transcript phrases"]
     PLAN --> OQ["OCR terms or discovery wildcard"]
-    PLAN --> AQ["Audio/prosody phrases"]
+    PLAN --> AQ["Open-vocabulary audio phrases"]
 
     VQ --> VR["Gemini query vector → pgvector / FAISS"]
     TQ --> TR["FTS5 / BM25 + Gemini semantic vector"]
     OQ --> OR["FTS5 exact string + Gemini semantic vector"]
-    AQ --> AR["FTS5 audio-event evidence + Gemini semantic vector"]
+    AQ --> AR["CLAP paired text encoder → 512-d audio search"]
 
     VR --> JOIN["Temporal relation join"]
     TR --> JOIN
@@ -300,7 +313,8 @@ flowchart TD
 | ASR | `ASRBackend` | OpenRouter Whisper Large V3 Turbo | faster-whisper, agency transcript |
 | Semantic embedding | `EmbeddingBackend` / `TextEncoder` | OpenRouter Gemini Embedding 2 (synchronous ingestion endpoint) | direct Gemini API, another multimodal embedding provider |
 | Local visual fallback | `VisualBackend` / `TextEncoder` | SigLIP2 | video-native encoder, CLIP |
-| Audio | `AudioBackend` | Optional Silero VAD | PANNs, CLAP, custom audio classifier |
+| Audio semantics | `AudioEmbeddingBackend` / `TextEncoder` | larger_clap_general CoreML audio + paired ONNX text | PANNs, another paired audio-text encoder |
+| Speech presence | `AudioBackend` | Optional Silero VAD | custom VAD |
 | Text index | `IndexStore` | SQLite FTS5 | OpenSearch, Tantivy |
 | Vector index | `VectorIndex` | FAISS with exact fallback | Qdrant, Milvus, pgvector |
 | Query planner | `QueryPlanner` | Gemini or heuristic | another structured LLM/planner |

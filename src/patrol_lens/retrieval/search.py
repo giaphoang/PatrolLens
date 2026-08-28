@@ -25,6 +25,7 @@ class CoarseRetriever:
         planner: QueryPlanner | None = None,
         visual_encoder: TextEncoder | None = None,
         semantic_encoder: TextEncoder | None = None,
+        audio_encoder: TextEncoder | None = None,
         vector_index: VectorIndex | PostgresVectorIndex | None = None,
         config: RetrievalConfig | None = None,
     ) -> None:
@@ -32,6 +33,7 @@ class CoarseRetriever:
         self.planner = planner or HeuristicQueryPlanner()
         self.visual_encoder = visual_encoder
         self.semantic_encoder = semantic_encoder
+        self.audio_encoder = audio_encoder
         self.vector_index = vector_index or AutoVectorIndex(store)
         self.config = config or RetrievalConfig()
 
@@ -85,14 +87,14 @@ class CoarseRetriever:
                 branch,
                 self.store.search_text(query, modalities=["audio_event"], limit=limit),
             )
-            if self.semantic_encoder:
-                semantic_branch = f"{branch}:semantic"
-                branches[semantic_branch] = self._hits(
-                    semantic_branch,
+            if self.audio_encoder:
+                clap_branch = f"{branch}:clap"
+                branches[clap_branch] = self._hits(
+                    clap_branch,
                     self.vector_index.search(
-                        self.semantic_encoder.encode_text(query),
+                        self.audio_encoder.encode_text(query),
                         modality="audio_event",
-                        model=self.semantic_encoder.model_name,
+                        model=self.audio_encoder.model_name,
                         limit=limit,
                     ),
                 )

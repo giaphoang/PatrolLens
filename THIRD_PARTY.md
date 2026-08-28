@@ -36,6 +36,21 @@ PatrolLens uses Gemini as the policy and implements its own controller, schemas,
 - The PostgreSQL server must have the `vector` extension installed; the included `compose.pgvector.yaml` provides a local development service.
 - The Python `pgvector` package is included in the optional `postgres` extra, while vector provenance and search SQL live in `index/postgres_store.py`.
 
+## LAION larger_clap_general CoreML
+
+- Source checkpoint: <https://huggingface.co/laion/larger_clap_general>
+- Paired conversion: <https://huggingface.co/atan2f/larger_clap_general_coreml>
+- License: Apache-2.0.
+- Audio artifact: INT8 CoreML HTSAT audio encoder, fixed 10-second mono input at 48 kHz, normalized 512-d output.
+- Query artifact: `text_model.onnx`, exported from the same LAION checkpoint, with normalized 512-d output.
+
+PatrolLens deliberately keeps this 512-dimensional audio space separate from
+Gemini's 768-dimensional image/text space. The paired ONNX text export must not
+be replaced with a differently fused or quantized CLAP text model: the
+conversion author reports that such mixing can collapse text-to-audio
+similarity. Audio and text inference are local; model files are downloaded by
+the macOS setup script into the ignored `.patrol-lens-models` directory.
+
 ## Video-RAG
 
 - Repository: <https://github.com/Leon1207/Video-RAG-master>
