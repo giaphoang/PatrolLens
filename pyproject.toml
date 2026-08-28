@@ -24,7 +24,6 @@ vision = [
 speech = [
   "faster-whisper>=1.0",
 ]
-audio = ["silero-vad>=5"]
 clap-macos = [
   "coremltools>=8,<10",
   "huggingface-hub>=0.27",
@@ -38,8 +37,6 @@ full = [
   "pgvector>=0.3",
   "numpy>=1.26",
   "pillow>=10",
-  "torch>=2.2",
-  "silero-vad>=5",
   "coremltools>=8,<10; sys_platform == 'darwin' and platform_machine == 'arm64'",
   "huggingface-hub>=0.27; sys_platform == 'darwin' and platform_machine == 'arm64'",
   "onnxruntime>=1.20; sys_platform == 'darwin' and platform_machine == 'arm64'",

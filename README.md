@@ -20,7 +20,6 @@ flowchart LR
         GE["OpenRouter<br/>Gemini Embedding 2<br/>unique images + ASR text · 768-d"]
         EXACT["OpenRouter Whisper<br/>exact searchable speech"]
         CLAP["larger_clap_general CoreML<br/>10 s audio · 512-d"]
-        CUES["Optional Silero VAD<br/>speech-presence cues"]
         IDX["Timestamped evidence<br/>SQLite FTS5 + pgvector/FAISS"]
     end
 
@@ -45,7 +44,6 @@ flowchart LR
     FF --> CH --> GE --> IDX
     FF --> EXACT --> IDX
     FF --> CLAP --> IDX
-    FF --> CUES --> IDX
     Q["Investigator query"] --> PLAN --> PAR
     IDX --> PAR --> FUSE --> AGENT
     AGENT --> TOOLS --> MEM --> AGENT
@@ -67,7 +65,6 @@ Retrieval scores create candidates only. They never become final evidence confid
 |---|---|---|
 | ASR | Timestamped spoken words | Miranda rights, quoted speech, names, commands |
 | larger_clap_general (`full`) | Timestamped 512-d raw-audio semantics | Shouting, sirens, gunshots, barking, overlapping acoustic events |
-| Silero VAD (`full`) | Timestamped speech presence | Speech/non-speech candidate filtering |
 | Gemini Embedding 2 | Shared 768-d image/text semantic space | Clothing, vehicles, scenes, transcript meaning |
 | Gemini clips | Motion and cross-modal association | Handcuffing, traffic-stop sequence, who shouted, event causality |
 
@@ -135,7 +132,7 @@ patrol-lens migrate-embeddings \
   --index .patrol-lens-artifacts
 ```
 
-This re-embeds canonical transcript text, historical OCR text, and visual image evidence into `pl_embeddings.embedding_768`, creates the `pl_embeddings_embedding_768_hnsw` index, and leaves any legacy `embedding` vectors intact for audit. Legacy raw-video/audio rows are deliberately not re-embedded; optimized ingestion recreates visual evidence as deduplicated keyframes and, in the full profile, audio as Silero speech-presence evidence. Resume normal ingestion with the same environment and without `--force`.
+This re-embeds canonical transcript text, historical OCR text, and visual image evidence into `pl_embeddings.embedding_768`, creates the `pl_embeddings_embedding_768_hnsw` index, and leaves any legacy `embedding` vectors intact for audit. Legacy raw-video/audio rows are deliberately not re-embedded; optimized ingestion recreates visual evidence as deduplicated keyframes and, in the full profile, audio as CLAP embeddings. Resume normal ingestion with the same environment and without `--force`.
 
 ### 1. Ingest videos
 
@@ -146,9 +143,9 @@ indexing plus OpenRouter `openai/whisper-large-v3-turbo` segment transcripts:
 patrol-lens ingest videos_corpus --index .patrol-lens --profile core
 ```
 
-Full profile adds local larger_clap_general CoreML audio embeddings and Silero
-VAD speech-presence evidence. CLAP decodes the original video directly at 48
-kHz; it never uses Whisper's 16 kHz WAV:
+Full profile adds local larger_clap_general CoreML audio embeddings. CLAP
+decodes the original video directly at 48 kHz; it never uses Whisper's 16 kHz
+WAV:
 
 ```bash
 patrol-lens ingest videos_corpus --index .patrol-lens --profile full
@@ -220,7 +217,7 @@ Use the same `--backend postgres --database-url ...` flags for `retrieve`, `sear
 
 ```mermaid
 flowchart LR
-    RAW["Raw video"] --> LOCAL["Local scene/keyframe dedup\nASR · CLAP · optional VAD"]
+    RAW["Raw video"] --> LOCAL["Local scene/keyframe dedup\nASR · CLAP"]
     LOCAL --> E["pl_evidence\ncontent · timestamps · metadata\nevidence_hash"]
     E --> GE["Gemini Embedding 2\nunique images + ASR text\n768-d only"]
     E --> CE["larger_clap_general\nraw audio · 512-d only"]
@@ -291,7 +288,7 @@ Each accepted result contains:
 
 ## How a 90-minute video is handled
 
-At the defaults, one 90-minute video retains 674 overlapping 16-second temporal windows at an 8-second stride for joining and recall, samples about 5,400 frames at 1 FPS, and produces 1,079 CLAP windows at 10 seconds / 5-second stride. Temporal windows are never uploaded for embedding. CLAP streams 48 kHz mono float32 directly from the original video and retains only the overlap buffer; it does not write another full-length WAV. The separate 16 kHz extraction remains for OpenRouter transcription and optional Silero VAD.
+At the defaults, one 90-minute video retains 674 overlapping 16-second temporal windows at an 8-second stride for joining and recall, samples about 5,400 frames at 1 FPS, and produces 1,079 CLAP windows at 10 seconds / 5-second stride. Temporal windows are never uploaded for embedding. CLAP streams 48 kHz mono float32 directly from the original video and retains only the overlap buffer; it does not write another full-length WAV. The separate 16 kHz extraction is used only for OpenRouter transcription.
 
 At query time, exact FTS5/Postgres text search is retained for literal ASR
 strings and any historical evidence rows. Gemini Embedding 2 query vectors

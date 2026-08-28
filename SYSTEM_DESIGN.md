@@ -27,7 +27,7 @@ flowchart LR
     V["38 bodycam videos<br/>≤ 90 min each"]
 
     subgraph OFF["1. Offline multimodal ingestion"]
-        E["OpenRouter Whisper / CLAP CoreML / optional Silero VAD"]
+        E["OpenRouter Whisper / CLAP CoreML"]
         SC["Local scene/change detection\nkeyframes + pHash dedup"]
         GE["OpenRouter Gemini Embedding 2\nunique images + ASR text · 768-d"]
         IDX["Timestamped evidence index"]
@@ -106,21 +106,18 @@ flowchart LR
     CHANGE --> KEYFRAMES["Canonical keyframes"]
     KEYFRAMES --> DEDUP["pHash visual dedup<br/>extend equivalent intervals"]
     AUDIO --> ASR["OpenRouter STT<br/>Whisper Large V3 Turbo"]
-    AUDIO --> VAD["Silero VAD<br/>full profile only"]
     CLAP_PCM --> CLAP_WIN["10 s windows · 5 s stride"]
     CLAP_WIN --> CLAP_EMB["larger_clap_general CoreML INT8<br/>safe CPU default · 512-d"]
     DEDUP --> IMAGE_EMB["Gemini Embedding 2<br/>unique image embeddings · 768-d"]
 
     ASR --> FTS["Postgres FTS / SQLite FTS5"]
     ASR --> TEXT_EMB["Gemini Embedding 2<br/>transcript embeddings"]
-    VAD --> SQL["Speech-presence evidence rows"]
     IMAGE_EMB --> CACHE["Content-hash embedding cache"]
     TEXT_EMB --> CACHE
     CACHE --> VEC["pgvector / FAISS<br/>768-d semantic vectors"]
     CLAP_EMB --> ACACHE["Audio content-hash cache"]
     ACACHE --> AVEC["pgvector / exact search<br/>512-d audio vectors"]
     FTS --> META["Canonical timestamps + provenance"]
-    SQL --> META
     VEC --> META
     AVEC --> META
 ```
@@ -132,12 +129,11 @@ flowchart LR
 | Visual appearance | Gemini Embedding 2 | Shared semantic search over locally deduplicated keyframe images |
 | Spoken language | OpenRouter Whisper Large V3 Turbo | Checkpointed segment timestamps for Miranda rights, commands, names, and quotations |
 | Acoustic semantics (full profile) | LAION larger_clap_general CoreML + paired ONNX text encoder | Open-vocabulary retrieval for shouting, sirens, gunshots, barking, music, and mixed acoustic events |
-| Speech presence (full profile) | Silero VAD | Optional timestamped speech/non-speech evidence |
 | Exact text lookup | Postgres FTS / SQLite FTS5 | Fast ASR transcript retrieval, preserving literal strings |
 | Semantic lookup | pgvector / FAISS | Independent cosine search over Gemini 768-d image/text and CLAP 512-d audio vectors |
 | Provenance | PostgreSQL | Model, confidence, source reference/hash, exact time span, and processing fingerprint |
 
-Processing windows organize temporal joining; they are not remote embedding units. ASR utterances, canonical visual intervals, CLAP acoustic windows, and optional Silero speech-presence windows retain their own timestamps. Five-minute 16 kHz WAV chunks reach OpenRouter only for transcription. CLAP separately streams 48 kHz audio from the original video into a fixed 10-second CoreML input and never persists a second full-length WAV. Raw video reaches Gemini only through bounded tools after coarse retrieval. Current ingestion deliberately omits OCR and handcrafted RMS/pitch analysis.
+Processing windows organize temporal joining; they are not remote embedding units. ASR utterances, canonical visual intervals, and CLAP acoustic windows retain their own timestamps. Five-minute 16 kHz WAV chunks reach OpenRouter only for transcription. CLAP separately streams 48 kHz audio from the original video into a fixed 10-second CoreML input and never persists a second full-length WAV. Raw video reaches Gemini only through bounded tools after coarse retrieval. Current ingestion deliberately omits OCR, standalone speech-presence classification, and handcrafted RMS/pitch analysis.
 
 ### Long-video behavior
 
@@ -314,7 +310,6 @@ flowchart TD
 | Semantic embedding | `EmbeddingBackend` / `TextEncoder` | OpenRouter Gemini Embedding 2 (synchronous ingestion endpoint) | direct Gemini API, another multimodal embedding provider |
 | Local visual fallback | `VisualBackend` / `TextEncoder` | SigLIP2 | video-native encoder, CLIP |
 | Audio semantics | `AudioEmbeddingBackend` / `TextEncoder` | larger_clap_general CoreML audio + paired ONNX text | PANNs, another paired audio-text encoder |
-| Speech presence | `AudioBackend` | Optional Silero VAD | custom VAD |
 | Text index | `IndexStore` | SQLite FTS5 | OpenSearch, Tantivy |
 | Vector index | `VectorIndex` | FAISS with exact fallback | Qdrant, Milvus, pgvector |
 | Query planner | `QueryPlanner` | Gemini or heuristic | another structured LLM/planner |

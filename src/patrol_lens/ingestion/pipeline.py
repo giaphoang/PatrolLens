@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ..adapters.asr import ASRBackend, WordSpan
-from ..adapters.audio import AudioBackend
 from ..adapters.clap import AudioEmbeddingBackend, clap_intervals
 from ..adapters.media import (
     VisualKeyframe,
@@ -54,7 +53,6 @@ class IngestionBackends:
     visual: VisualBackend | None = None
     asr: ASRBackend | None = None
     ocr: OCRBackend | None = None
-    audio: AudioBackend | None = None
     audio_embedding: AudioEmbeddingBackend | None = None
     embedding: EmbeddingBackend | None = None
 
@@ -141,7 +139,6 @@ class IngestionPipeline:
                     "embedding",
                     "asr",
                     "ocr",
-                    "audio",
                     "audio_embedding",
                 )
             },
@@ -208,7 +205,6 @@ class IngestionPipeline:
             "transcript_reused": False,
             "visual": 0,
             "ocr": 0,
-            "audio": 0,
             "audio_embeddings": 0,
             "visual_vectors": 0,
             "video_embeddings": 0,
@@ -226,7 +222,7 @@ class IngestionPipeline:
         try:
             audio_path = (
                 self._audio_path(asset)
-                if not clap_only_backfill and (self.backends.asr or self.backends.audio)
+                if not clap_only_backfill and self.backends.asr
                 else None
             )
             if not clap_only_backfill and self.backends.asr and audio_path:
@@ -262,8 +258,6 @@ class IngestionPipeline:
                     segments,
                 )
                 stats["embedding_vectors"] += stats["audio_embeddings"]
-            if not clap_only_backfill and self.backends.audio and audio_path:
-                stats["audio"] = self._ingest_audio(asset, segments, audio_path)
             rebuild = getattr(self.vector_index, "rebuild", None)
             if callable(rebuild) and self.backends.visual:
                 rebuild(modality="visual", model=self.backends.visual.model_name)
@@ -988,61 +982,4 @@ class IngestionPipeline:
                     )
                 )
             self.store.add_evidence_and_embeddings(evidence_batch, embedding_batch)
-        return len(intervals)
-
-    def _ingest_audio(
-        self,
-        asset: VideoAsset,
-        segments: list[Segment],
-        audio_path: Path,
-    ) -> int:
-        assert self.backends.audio is not None
-        intervals: list[tuple[int, int]] = []
-        start_ms = 0
-        while start_ms < asset.duration_ms:
-            end_ms = min(asset.duration_ms, start_ms + self.config.audio_window_ms)
-            intervals.append((start_ms, end_ms))
-            if end_ms >= asset.duration_ms:
-                break
-            start_ms += self.config.audio_stride_ms
-        analyze_many = getattr(self.backends.audio, "analyze_many", None)
-        if callable(analyze_many):
-            analyses = analyze_many(str(audio_path), intervals)
-        else:
-            analyses = [
-                self.backends.audio.analyze(str(audio_path), start, end)
-                for start, end in intervals
-            ]
-
-        batch_size = 500
-        for offset in range(0, len(intervals), batch_size):
-            batch_intervals = intervals[offset : offset + batch_size]
-            batch_analyses = analyses[offset : offset + batch_size]
-            evidence: list[Evidence] = []
-            for ordinal, ((start_ms, end_ms), result) in enumerate(
-                zip(batch_intervals, batch_analyses), start=offset
-            ):
-                source = self.backends.audio.model_name
-                metadata: dict[str, Any] = {
-                    "speech_activity": result.speech_activity,
-                    "event_scores": result.event_scores,
-                    "source_reference": str(audio_path),
-                    "source_hash": asset.sha256,
-                    "processing_version": self.config.schema_version,
-                }
-                evidence.append(
-                    Evidence(
-                        id=f"{asset.id}-audio-{ordinal:07d}",
-                        video_id=asset.id,
-                        segment_id=self._segment_for(segments, start_ms),
-                        start_ms=start_ms,
-                        end_ms=end_ms,
-                        modality="audio_event",
-                        content=result.content or f"audio segment from {start_ms / 1000:.3f}s to {end_ms / 1000:.3f}s",
-                        confidence=max(result.confidence, result.speech_activity * 0.5),
-                        source=source,
-                        metadata=metadata,
-                    )
-                )
-            self.store.add_evidence_many(evidence)
         return len(intervals)

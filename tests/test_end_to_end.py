@@ -6,7 +6,6 @@ import subprocess
 import pytest
 
 from patrol_lens.adapters.asr import WordSpan
-from patrol_lens.adapters.audio import AudioAnalysis
 from patrol_lens.config import IngestionConfig, RetrievalConfig
 from patrol_lens.index import IndexStore, SQLiteVectorIndex
 from patrol_lens.ingestion import IngestionBackends, IngestionPipeline
@@ -39,13 +38,6 @@ class FakeOCR:
 
     def detect(self, _image_path):
         return [{"text": "ABC 123", "confidence": 0.95, "box": [[0, 0], [10, 10]]}]
-
-
-class FakeAudio:
-    model_name = "fake-audio"
-
-    def analyze(self, _audio_path, _start_ms, _end_ms):
-        return AudioAnalysis(0.9, ["speech"], 0.88)
 
 
 class FakeMultimodalEmbedding:
@@ -94,8 +86,6 @@ def test_synthetic_core_ingestion_to_multimodal_retrieval(tmp_path):
             window_ms=2_000,
             stride_ms=1_000,
             frame_step_ms=1_000,
-            audio_window_ms=2_000,
-            audio_stride_ms=1_000,
         ),
     ).ingest_path(source)
     retriever = CoarseRetriever(
@@ -113,7 +103,6 @@ def test_synthetic_core_ingestion_to_multimodal_retrieval(tmp_path):
     assert stats["visual"] == 1
     assert stats["transcript"] == 1
     assert stats["ocr"] == 0
-    assert stats["audio"] == 0
     assert candidates
     assert set(candidates[0].covered_modalities) >= {"visual", "transcript"}
     store.close()
@@ -139,15 +128,12 @@ def test_gemini_embedding_ingestion_keeps_exact_text_and_indexes_all_modalities(
         backends=IngestionBackends(
             asr=FakeASR(),
             ocr=FakeOCR(),
-            audio=FakeAudio(),
             embedding=embedding,
         ),
         config=IngestionConfig(
             window_ms=2_000,
             stride_ms=1_000,
             frame_step_ms=1_000,
-            audio_window_ms=2_000,
-            audio_stride_ms=1_000,
             embedding_dimensions=4,
             embedding_batch_size=2,
         ),
@@ -160,7 +146,6 @@ def test_gemini_embedding_ingestion_keeps_exact_text_and_indexes_all_modalities(
     assert stats["deduplicated_frames"] == stats["sampled_frames"] - 1
     assert stats["transcript"] == 1
     assert stats["ocr"] >= 2
-    assert stats["audio"] >= 2
     assert stats["embedding_vectors"] == (
         stats["video_embeddings"]
         + stats["image_embeddings"]
@@ -186,15 +171,12 @@ def test_gemini_embedding_ingestion_keeps_exact_text_and_indexes_all_modalities(
         backends=IngestionBackends(
             asr=FakeASR(),
             ocr=FakeOCR(),
-            audio=FakeAudio(),
             embedding=embedding,
         ),
         config=IngestionConfig(
             window_ms=2_000,
             stride_ms=1_000,
             frame_step_ms=1_000,
-            audio_window_ms=2_000,
-            audio_stride_ms=1_000,
             embedding_dimensions=4,
             embedding_batch_size=2,
         ),

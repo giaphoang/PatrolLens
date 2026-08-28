@@ -56,7 +56,7 @@ def test_offline_ingestion_defaults_to_openrouter_asr(monkeypatch):
     assert backend.model_name == "openai/whisper-large-v3-turbo"
 
 
-def test_ingestion_profiles_exclude_removed_ocr_rms_and_yamnet_stacks():
+def test_ingestion_profiles_exclude_removed_auxiliary_stacks():
     parser = build_parser()
     common = ["ingest", "videos", "--no-embeddings", "--no-asr", "--no-visual"]
 
@@ -67,10 +67,10 @@ def test_ingestion_profiles_exclude_removed_ocr_rms_and_yamnet_stacks():
     )
 
     assert core.ocr is None
-    assert core.audio is None
     assert full.ocr is None
-    assert full.audio is not None
-    assert full.audio.model_name == "silero-vad"
+    assert not hasattr(core, "audio")
+    assert not hasattr(core_args, "audio_window_s")
+    assert not hasattr(core_args, "audio_stride_s")
     assert not hasattr(core_args, "ocr_language")
     assert not hasattr(core_args, "yamnet")
     assert not hasattr(core_args, "raised_voice_db")

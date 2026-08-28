@@ -16,7 +16,6 @@ from .adapters.asr import (
     FasterWhisperASR,
     OpenRouterASR,
 )
-from .adapters.audio import SileroVADAnalyzer
 from .adapters.clap import DEFAULT_CLAP_MODEL, ClapCoreMLBackend
 from .adapters.media import extract_audio, iter_video_files, probe_video
 from .adapters.openrouter import (
@@ -170,10 +169,7 @@ def _clap_backend(
 def _ingestion_backends(args: argparse.Namespace) -> IngestionBackends:
     if args.profile == "metadata":
         return IngestionBackends()
-    use_clap = (
-        not args.no_audio
-        and (args.clap if args.clap is not None else args.profile == "full")
-    )
+    use_clap = args.clap if args.clap is not None else args.profile == "full"
     audio_embedding = _clap_backend(args, required=True) if use_clap else None
     asr = None if args.no_asr else _asr_backend(args)
     embedding = None if args.no_embeddings else _embedding(args)
@@ -184,16 +180,10 @@ def _ingestion_backends(args: argparse.Namespace) -> IngestionBackends:
         if args.no_visual or embedding is not None
         else SigLIP2Encoder(args.visual_model, device=args.device)
     )
-    audio = None
-    if not args.no_audio:
-        use_silero = args.silero_vad if args.silero_vad is not None else args.profile == "full"
-        if use_silero:
-            audio = SileroVADAnalyzer()
     return IngestionBackends(
         visual=visual,
         embedding=embedding,
         asr=asr,
-        audio=audio,
         audio_embedding=audio_embedding,
     )
 
@@ -203,8 +193,6 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         args.frame_fps,
         args.window_s,
         args.stride_s,
-        args.audio_window_s,
-        args.audio_stride_s,
         args.clap_window_s,
         args.clap_stride_s,
     ) <= 0:
@@ -230,8 +218,6 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             window_ms=round(args.window_s * 1000),
             stride_ms=round(args.stride_s * 1000),
             frame_step_ms=max(1, round(1000 / args.frame_fps)),
-            audio_window_ms=round(args.audio_window_s * 1000),
-            audio_stride_ms=round(args.audio_stride_s * 1000),
             clap_window_ms=round(args.clap_window_s * 1000),
             clap_stride_ms=round(args.clap_stride_s * 1000),
             batch_size=args.batch_size,
@@ -404,7 +390,6 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
         "faiss": "faiss",
         "faster-whisper": "faster_whisper",
         "SigLIP2/transformers": "transformers",
-        "Silero VAD": "silero_vad",
         "CoreML CLAP": "coremltools",
         "CLAP text/ONNX": "onnxruntime",
     }
@@ -512,14 +497,10 @@ def _add_ingest_arguments(parser: argparse.ArgumentParser) -> None:
     _add_transcriber_arguments(parser)
     parser.add_argument("--no-visual", action="store_true")
     parser.add_argument("--no-asr", action="store_true")
-    parser.add_argument("--no-audio", action="store_true")
-    parser.add_argument("--silero-vad", action=argparse.BooleanOptionalAction, default=None)
     _add_clap_arguments(parser)
     parser.add_argument("--window-s", type=float, default=16.0)
     parser.add_argument("--stride-s", type=float, default=8.0)
     parser.add_argument("--frame-fps", type=float, default=1.0)
-    parser.add_argument("--audio-window-s", type=float, default=4.0)
-    parser.add_argument("--audio-stride-s", type=float, default=2.0)
     parser.add_argument(
         "--clap-window-s",
         type=float,

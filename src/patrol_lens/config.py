@@ -13,8 +13,6 @@ class IngestionConfig:
     window_ms: int = 16_000
     stride_ms: int = 8_000
     frame_step_ms: int = 1_000
-    audio_window_ms: int = 4_000
-    audio_stride_ms: int = 2_000
     clap_window_ms: int = 10_000
     clap_stride_ms: int = 5_000
     batch_size: int = 16
