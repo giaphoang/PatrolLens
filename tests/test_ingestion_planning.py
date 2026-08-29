@@ -11,7 +11,9 @@ from patrol_lens.ingestion.planning import (
     IngestionCostRates,
     build_cost_report,
     estimate_video_cost,
+    new_cost_report_path,
     prioritize_oldest,
+    reconcile_video_cost,
     select_pending_batch,
 )
 
@@ -25,6 +27,53 @@ def test_video_priority_uses_oldest_modification_time(tmp_path):
     os.utime(newer, ns=(2_000_000_000, 2_000_000_000))
 
     assert prioritize_oldest([newer, older]) == [older.resolve(), newer.resolve()]
+
+
+def test_new_cost_report_path_is_unique_per_ingestion_turn(tmp_path):
+    first = new_cost_report_path(tmp_path / "index")
+    second = new_cost_report_path(tmp_path / "index")
+
+    assert first.parent == (tmp_path / "index" / "reports").resolve()
+    assert first.suffix == ".json"
+    assert first.name.startswith("ingestion-cost-estimate-")
+    assert first != second
+
+
+def test_cost_rates_follow_batch_model_and_allow_model_specific_overrides(monkeypatch):
+    monkeypatch.delenv(
+        "PATROLLENS_ESTIMATED_EMBEDDING_TEXT_USD_PER_MILLION_TOKENS",
+        raising=False,
+    )
+    monkeypatch.delenv(
+        "PATROLLENS_ESTIMATED_EMBEDDING_IMAGE_USD_PER_MILLION_TOKENS",
+        raising=False,
+    )
+
+    batch = IngestionCostRates.from_env(
+        embedding_model="google/gemini-embedding-2:batch"
+    )
+
+    assert batch.text_usd_per_million_tokens == 0.10
+    assert batch.image_usd_per_million_tokens == 0.225
+
+    suffix = "ACME_VIDEO_EMBEDDINGS_V2"
+    monkeypatch.setenv(
+        f"PATROLLENS_ESTIMATED_EMBEDDING_TEXT_USD_PER_MILLION_TOKENS_{suffix}",
+        "0.07",
+    )
+    monkeypatch.setenv(
+        f"PATROLLENS_ESTIMATED_EMBEDDING_IMAGE_USD_PER_MILLION_TOKENS_{suffix}",
+        "0.31",
+    )
+    custom = IngestionCostRates.from_env(embedding_model="acme/video-embeddings-v2")
+
+    assert custom.text_usd_per_million_tokens == 0.07
+    assert custom.image_usd_per_million_tokens == 0.31
+    assert (
+        IngestionCostRates.pricing_metadata("acme/video-embeddings-v2")
+        ["pricing_status"]
+        == "unverified_fallback"
+    )
 
 
 def test_cost_estimate_separates_asr_text_images_and_local_clap(tmp_path):
@@ -142,3 +191,95 @@ def test_batch_skips_completed_entries_and_report_totals_selected_cost(tmp_path)
     assert report["summary"]["selected_batch_estimated_cost_usd"] == 0.5
     assert report["summary"]["pending_corpus_estimated_cost_usd"] == 1.25
     assert report["summary"]["remaining_after_selected_batch_estimated_cost_usd"] == 0.75
+
+
+def test_report_reconciles_provider_usage_and_local_zero_cost(tmp_path):
+    entries = [
+        {
+            "video_id": "v1",
+            "scheduling_state": "pending",
+            "selected_for_batch": True,
+            "cost_estimate": {
+                "gross_estimated_cost_usd": 1.25,
+                "incremental_estimated_cost_usd": 1.25,
+                "asr": {"remote_pricing_applied": True},
+                "text_embeddings": {"enabled": True},
+                "image_embeddings": {"enabled": False},
+            },
+            "execution": {
+                "status": "complete",
+                "runtime": {
+                    "asr": {
+                        "api_calls": 1,
+                        "latency_ms": 25.0,
+                        "reported_cost_usd": 0.20,
+                        "cost_available": True,
+                        "cost_source": "provider",
+                    },
+                    "embedding": {
+                        "api_calls": 2,
+                        "latency_ms": 40.0,
+                        "reported_cost_usd": 0.30,
+                        "cost_available": True,
+                        "cost_source": "provider",
+                    },
+                    "local": {
+                        "audio_embedding": {
+                            "api_calls": 4,
+                            "reported_cost_usd": 0.0,
+                            "cost_available": True,
+                            "cost_source": "local_zero",
+                        }
+                    },
+                },
+            },
+        }
+    ]
+
+    report = build_cost_report(
+        entries,
+        input_root=tmp_path,
+        artifact_root=tmp_path / "index",
+        video_batch_size=1,
+        rates=IngestionCostRates(),
+        embedding_model="google/gemini-embedding-2",
+    )
+
+    reconciliation = report["videos"][0]["cost_reconciliation"]
+    assert reconciliation["status"] == "actual"
+    assert reconciliation["actual_cost_usd"] == 0.5
+    assert reconciliation["local_cost_usd"] == 0.0
+    assert reconciliation["cost_source"] == "provider"
+    assert report["summary"]["selected_batch_actual_cost_usd"] == 0.5
+    assert report["summary"]["selected_batch_local_cost_usd"] == 0.0
+
+
+def test_report_uses_estimate_when_provider_cost_is_missing():
+    entry = {
+        "selected_for_batch": True,
+        "scheduling_state": "pending",
+        "cost_estimate": {
+            "gross_estimated_cost_usd": 2.0,
+            "incremental_estimated_cost_usd": 2.0,
+            "asr": {"remote_pricing_applied": False},
+            "text_embeddings": {"enabled": True},
+            "image_embeddings": {"enabled": False},
+        },
+        "execution": {
+            "status": "complete",
+            "runtime": {
+                "embedding": {
+                    "api_calls": 1,
+                    "reported_cost_usd": None,
+                    "cost_available": False,
+                    "cost_source": "unavailable",
+                }
+            },
+        },
+    }
+
+    reconciliation = reconcile_video_cost(entry)
+
+    assert reconciliation["actual_cost_usd"] is None
+    assert reconciliation["reconciled_cost_usd"] == 2.0
+    assert reconciliation["provider_cost_complete"] is False

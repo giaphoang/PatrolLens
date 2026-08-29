@@ -33,19 +33,27 @@ class FakeClient:
 
 
 class FakeEmbeddings:
-    def __init__(self, dimensions: int = 3) -> None:
+    def __init__(self, dimensions: int = 3, usage_cost: float | None = None) -> None:
         self.dimensions = dimensions
+        self.usage_cost = usage_cost
         self.calls: list[dict] = []
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
         inputs = kwargs["input"] if isinstance(kwargs["input"], list) else [kwargs["input"]]
-        return SimpleNamespace(
+        response = SimpleNamespace(
             data=[
                 SimpleNamespace(embedding=[float(index + 1)] * self.dimensions, index=index)
                 for index, _input in enumerate(inputs)
             ]
         )
+        if self.usage_cost is not None:
+            response.usage = SimpleNamespace(
+                prompt_tokens=11,
+                total_tokens=11,
+                cost=self.usage_cost,
+            )
+        return response
 
 
 class FakeEmbeddingClient:
@@ -118,7 +126,7 @@ def test_openrouter_requires_openrouter_key(monkeypatch):
         OpenRouterJSONClient()
 
 
-def test_openrouter_embedding_client_batches_text_and_media(tmp_path):
+def test_openrouter_embedding_client_sync_batches_text_and_media(tmp_path):
     image = tmp_path / "frame.jpg"
     video = tmp_path / "chunk.mp4"
     audio = tmp_path / "chunk.wav"
@@ -148,7 +156,7 @@ def test_openrouter_embedding_client_batches_text_and_media(tmp_path):
     assert embeddings.calls[0]["input"] == "task: search result | query: red jacket"
     assert embeddings.calls[0]["dimensions"] == 3
     assert embeddings.calls[0]["extra_body"] == {"output_dimensionality": 3}
-    assert embeddings.calls[1]["model"] == "google/gemini-embedding-2:batch"
+    assert embeddings.calls[1]["model"] == "google/gemini-embedding-2"
     assert embeddings.calls[1]["input"] == [
         "title: none | text: Miranda rights",
         "title: none | text: ABC 123",
@@ -158,6 +166,107 @@ def test_openrouter_embedding_client_batches_text_and_media(tmp_path):
     assert embeddings.calls[4]["input"][0]["content"][0]["type"] == "input_audio"
 
 
+def test_openrouter_embedding_client_uses_checkpointed_batch_api(tmp_path):
+    calls: list[tuple[str, str, dict | None]] = []
+    client = OpenRouterEmbeddingClient(
+        model="google/gemini-embedding-2",
+        batch_model="google/gemini-embedding-2:batch",
+        dimensions=3,
+        api_key="test-key",
+        batch_api=True,
+        batch_poll_interval_s=0,
+        batch_timeout_s=30,
+        batch_checkpoint_dir=tmp_path / "checkpoints",
+    )
+
+    def fake_http(method, url, *, payload=None, request_hash=None):
+        calls.append((method, url, payload))
+        if method == "POST":
+            return {"id": "batch-123", "status": "validating"}
+        return {
+            "id": "batch-123",
+            "status": "completed",
+            "results": [
+                {
+                    "custom_id": "embedding-000001",
+                    "response": {
+                        "status_code": 200,
+                        "body": {"data": [{"index": 0, "embedding": [2.0, 2.0, 2.0]}]},
+                    },
+                },
+                {
+                    "custom_id": "embedding-000000",
+                    "response": {
+                        "status_code": 200,
+                        "body": {"data": [{"index": 0, "embedding": [1.0, 1.0, 1.0]}]},
+                    },
+                },
+            ],
+        }
+
+    client._batch_http_json = fake_http
+    vectors = client.encode_texts(["first", "second"])
+
+    assert vectors == [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]]
+    assert [call[0] for call in calls] == ["POST", "GET"]
+    assert calls[0][1] == "https://openrouter.ai/api/beta/batches"
+    payload = calls[0][2]
+    assert payload is not None
+    assert payload["endpoint"] == "/v1/embeddings"
+    assert payload["model"] == "google/gemini-embedding-2"
+    assert payload["requests"][0]["body"]["model"] == "google/gemini-embedding-2"
+    assert payload["requests"][0]["body"]["dimensions"] == 3
+    assert "output_dimensionality" not in payload["requests"][0]["body"]
+
+    client._batch_http_json = lambda *_args, **_kwargs: pytest.fail(
+        "completed batch should be read from its checkpoint"
+    )
+    assert client.encode_texts(["first", "second"]) == vectors
+    assert len(list((tmp_path / "checkpoints").glob("*.json"))) == 1
+
+
+def test_openrouter_batch_embedding_records_result_usage(tmp_path):
+    client = OpenRouterEmbeddingClient(
+        model="google/gemini-embedding-2",
+        batch_model="google/gemini-embedding-2:batch",
+        dimensions=3,
+        api_key="test-key",
+        batch_api=True,
+        batch_poll_interval_s=0,
+        batch_checkpoint_dir=tmp_path / "checkpoints",
+    )
+
+    def fake_http(method, _url, *, payload=None, request_hash=None):
+        if method == "POST":
+            return {"id": "batch-with-usage", "status": "validating"}
+        return {
+            "id": "batch-with-usage",
+            "status": "completed",
+            "results": [
+                {
+                    "custom_id": "embedding-000000",
+                    "response": {
+                        "status_code": 200,
+                        "body": {
+                            "data": [{"index": 0, "embedding": [1.0, 1.0, 1.0]}],
+                            "usage": {"prompt_tokens": 7, "total_tokens": 7, "cost": 0.001},
+                        },
+                    },
+                }
+            ],
+        }
+
+    client._batch_http_json = fake_http
+
+    assert client.encode_texts(["first"]) == [[1.0, 1.0, 1.0]]
+    assert client.last_runtime_info["batch_jobs"] == 1
+    assert client.last_runtime_info["batch_poll_requests"] == 1
+    assert client.last_runtime_info["total_tokens"] == 7
+    assert client.last_runtime_info["reported_cost_usd"] == 0.001
+    assert client.last_runtime_info["cost_source"] == "provider"
+    assert client.last_runtime_info["latency_ms"] >= 0
+
+
 def test_openrouter_rejects_provider_dimension_mismatch():
     embeddings = FakeEmbeddings(dimensions=4)
     client = OpenRouterEmbeddingClient(dimensions=3, api_key="test-key")
@@ -165,3 +274,23 @@ def test_openrouter_rejects_provider_dimension_mismatch():
 
     with pytest.raises(EmbeddingDimensionError, match=r"Expected 3, got 4"):
         client.encode_text("dimension mismatch")
+
+
+def test_openrouter_embedding_records_provider_usage_and_latency():
+    embeddings = FakeEmbeddings(usage_cost=0.0042)
+    client = OpenRouterEmbeddingClient(
+        dimensions=3,
+        api_key="test-key",
+    )
+    client._client = FakeEmbeddingClient(embeddings)
+
+    client.encode_texts(["one", "two"])
+
+    runtime = client.last_runtime_info
+    assert runtime["api_calls"] == 1
+    assert runtime["input_items"] == 2
+    assert runtime["input_tokens"] == 11
+    assert runtime["total_tokens"] == 11
+    assert runtime["reported_cost_usd"] == 0.0042
+    assert runtime["cost_source"] == "provider"
+    assert runtime["latency_ms"] >= 0

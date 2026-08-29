@@ -64,9 +64,12 @@ def test_openrouter_asr_chunks_offsets_and_checkpoints(monkeypatch, tmp_path):
     assert calls[0]["input_audio"]["format"] == "wav"
     assert "language" not in calls[0]
     assert first_runtime["api_calls"] == 3
+    assert first_runtime["cost_source"] == "provider"
+    assert first_runtime["latency_ms"] >= 0
     assert backend.last_runtime_info["api_calls"] == 0
     assert backend.last_runtime_info["cache_hits"] == 3
     assert backend.last_runtime_info["reported_cost_usd"] == 0
+    assert backend.last_runtime_info["cost_source"] == "cache_only"
 
 
 def test_openrouter_asr_rejects_response_without_segment_timestamps(

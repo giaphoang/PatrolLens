@@ -116,14 +116,35 @@ deduplicated keyframe images and ASR text through the embeddings endpoint.
 Raw video is sent only after coarse retrieval through bounded active-perception
 tools.
 
-Set the embedding model and vector size in the environment when resuming or rebuilding an index. Ingestion does not require a separate batch-model CLI option:
+Set the embedding models and vector size in the environment when resuming or rebuilding an index:
 
 ```bash
 export PATROLLENS_EMBEDDING_MODEL=google/gemini-embedding-2
+export PATROLLENS_EMBEDDING_BATCH_MODEL=google/gemini-embedding-2:batch
 export PATROLLENS_EMBEDDING_DIMENSIONS=768
 ```
 
-`PATROLLENS_EMBEDDING_QUERY_MODEL` may optionally override the model used for investigator queries. `PATROLLENS_EMBEDDING_BATCH_MODEL` is reserved for a future asynchronous text-only Batch API path; current ingestion does not use it because multimodal inputs are sent through the synchronous endpoint.
+`PATROLLENS_EMBEDDING_BATCH_MODEL` controls the model used for bulk transcript
+and image embedding requests during ingestion. In `batch` mode, the CLI submits
+those requests to OpenRouter's `/api/beta/batches` endpoint, polls until the
+inline results are ready, and saves resumable job checkpoints under
+`INDEX/batches/openrouter-embeddings`. Batch mode is enabled only by passing
+`--embedding-mode batch`; otherwise ingestion uses
+`PATROLLENS_EMBEDDING_MODEL` through the synchronous endpoint.
+`PATROLLENS_EMBEDDING_QUERY_MODEL` remains synchronous for investigator queries.
+Keep the query model in the same embedding family and dimensions as the indexed
+model.
+
+The equivalent one-run CLI override is:
+
+```bash
+patrol-lens ingest compressed_video_corpus \
+  --backend postgres \
+  --database-url "$PATROLLENS_DATABASE_URL" \
+  --index .patrol-lens-artifacts \
+  --profile full \
+  --embedding-mode batch
+```
 
 For an existing PostgreSQL index, run the idempotent 768-dimensional backfill before resuming ingestion:
 
@@ -205,11 +226,14 @@ patrol-lens ingest compressed_video_corpus \
   --video-batch-size 3
 ```
 
-Every invocation writes a per-video estimate before remote indexing starts:
+Every invocation writes a new per-video estimate before remote indexing starts:
 
 ```text
-INDEX/reports/ingestion-cost-estimate.json
+INDEX/reports/ingestion-cost-estimate-<UTC timestamp>-<unique id>.json
 ```
+
+The same file is updated as that indexing turn progresses, and earlier reports
+are preserved. Use `--cost-report PATH` when an explicit report path is desired.
 
 Preview the schedule and estimated cost without indexing:
 
@@ -225,9 +249,23 @@ The report separates OpenRouter ASR, transcript embeddings, image embeddings,
 and zero-remote-cost local CLAP. It contains selected-batch, all-pending,
 remaining-after-batch, and gross totals. Existing keyframe manifests tighten the image estimate;
 otherwise it conservatively assumes every sampled frame is unique. Completed
-videos have zero incremental cost. Override the destination with
-`--cost-report PATH` and the pricing assumptions with the corresponding
-`PATROLLENS_ESTIMATED_*` environment variables.
+videos have zero incremental cost. Known OpenRouter embedding models resolve
+their catalog rates automatically (including the lower `:batch` rates). For a
+different model, set model-specific overrides such as
+`PATROLLENS_ESTIMATED_EMBEDDING_TEXT_USD_PER_MILLION_TOKENS_ACME_MODEL` and the
+matching image variable; these take precedence over the global fallback rates.
+
+During indexing, the report merges each provider response's OpenRouter usage
+and cost with the estimate. It records `actual_cost_usd` only when provider
+cost is available, keeps missing provider cost as `null`, and uses
+`reconciled_cost_usd` as the estimate fallback. Local model work is explicitly
+reported as `$0` while its latency and memory remain visible in runtime
+telemetry. The embedding canary's real usage is tracked separately because it
+uses the query model and is not part of the per-video estimate.
+
+Override the destination with `--cost-report PATH` and the fallback pricing
+assumptions with the corresponding `PATROLLENS_ESTIMATED_*` environment
+variables.
 
 Each per-video ingestion report includes `latency_seconds` and `peak_rss_mb`. The latency covers `ingest_asset`; `peak_rss_mb` is the process high-water resident memory reported by the standard library, so it is cumulative when one CLI process ingests multiple videos and may be `null` on unsupported platforms.
 

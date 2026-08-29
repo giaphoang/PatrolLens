@@ -45,7 +45,9 @@ from .ingestion.planning import (
     build_cost_report,
     estimate_video_cost,
     file_update_metadata,
+    new_cost_report_path,
     prioritize_oldest,
+    reconcile_cost_report,
     select_pending_batch,
     write_cost_report,
 )
@@ -203,17 +205,27 @@ def _embedding(
     recorder: TrajectoryRecorder | None = None,
 ) -> OpenRouterEmbeddingClient:
     model = os.getenv("PATROLLENS_EMBEDDING_MODEL", DEFAULT_GEMINI_EMBEDDING_MODEL)
+    batch_model = os.getenv("PATROLLENS_EMBEDDING_BATCH_MODEL", model)
     query_model = os.getenv("PATROLLENS_EMBEDDING_QUERY_MODEL", model)
+    mode = getattr(args, "embedding_mode", "sync")
+    batch_api = mode == "batch"
     return OpenRouterEmbeddingClient(
         model=model,
-        # Ingestion uses the synchronous embeddings endpoint. The client
-        # defaults the document/media route to the same canonical model.
+        batch_model=batch_model if batch_api else model,
         query_model=query_model,
         dimensions=args.embedding_dimensions,
         base_url=args.openrouter_base_url,
         http_referer=args.openrouter_http_referer,
         title=args.openrouter_title,
         media_batch_size=getattr(args, "embedding_batch_size", 6),
+        batch_api=batch_api,
+        batch_poll_interval_s=getattr(args, "embedding_batch_poll_s", 10.0),
+        batch_timeout_s=getattr(args, "embedding_batch_timeout_s", 86_400.0),
+        batch_checkpoint_dir=(
+            Path(args.index) / "batches" / "openrouter-embeddings"
+            if batch_api
+            else None
+        ),
         recorder=recorder,
     )
 
@@ -221,9 +233,84 @@ def _embedding(
 def _embedding_canary(embedding: OpenRouterEmbeddingClient) -> None:
     """Verify the provider's output size before ingestion can write evidence."""
 
-    vector = embedding.encode_text("PatrolLens embedding dimension canary")
+    vector = embedding.canary_ingestion()
     if len(vector) != embedding.dimensions:
         raise EmbeddingDimensionError(embedding.dimensions, len(vector))
+
+
+def _reset_runtime_info(backend: object | None) -> None:
+    if backend is None:
+        return
+    reset = getattr(backend, "reset_runtime_info", None)
+    if callable(reset):
+        reset()
+    elif hasattr(backend, "last_runtime_info"):
+        setattr(backend, "last_runtime_info", {})
+
+
+def _runtime_snapshot(backend: object | None) -> dict[str, object] | None:
+    if backend is None:
+        return None
+    value = getattr(backend, "last_runtime_info", None)
+    return dict(value) if isinstance(value, dict) else None
+
+
+def _reset_ingestion_runtime(backends: IngestionBackends) -> None:
+    for backend in (
+        backends.asr,
+        backends.embedding,
+        backends.visual,
+        backends.audio_embedding,
+    ):
+        _reset_runtime_info(backend)
+
+
+def _ingestion_runtime(
+    backends: IngestionBackends,
+    stats: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Collect provider ledgers and explicit zero-cost local model entries."""
+
+    stats = stats or {}
+    runtime: dict[str, object] = {}
+    for name, backend in (
+        ("asr", backends.asr),
+        ("embedding", backends.embedding),
+    ):
+        snapshot = _runtime_snapshot(backend)
+        if snapshot is not None:
+            if name == "embedding":
+                snapshot["cache_hits"] = int(
+                    stats.get("embedding_cache_hits", 0) or 0
+                )
+                snapshot["cache_misses"] = int(
+                    stats.get("embedding_cache_misses", 0) or 0
+                )
+            runtime[name] = snapshot
+
+    local: dict[str, object] = {}
+    if backends.audio_embedding is not None:
+        local["audio_embedding"] = {
+            "provider": "local",
+            "model": backends.audio_embedding.model_name,
+            "api_calls": int(stats.get("clap_model_calls", 0) or 0),
+            "cache_hits": int(stats.get("clap_cache_hits", 0) or 0),
+            "reported_cost_usd": 0.0,
+            "cost_available": True,
+            "cost_source": "local_zero",
+        }
+    if backends.visual is not None and backends.embedding is None:
+        local["visual"] = {
+            "provider": "local",
+            "model": backends.visual.model_name,
+            "api_calls": int(stats.get("visual_vectors", 0) or 0),
+            "reported_cost_usd": 0.0,
+            "cost_available": True,
+            "cost_source": "local_zero",
+        }
+    if local:
+        runtime["local"] = local
+    return runtime
 
 
 def _clap_backend(
@@ -298,6 +385,10 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         raise ValueError("--video-batch-size must be positive")
     if args.embedding_batch_size <= 0:
         raise ValueError("--embedding-batch-size must be positive")
+    if args.embedding_batch_poll_s < 0:
+        raise ValueError("--embedding-batch-poll-s cannot be negative")
+    if args.embedding_batch_timeout_s <= 0:
+        raise ValueError("--embedding-batch-timeout-s must be positive")
     if args.asr_chunk_seconds <= 0 or args.asr_chunk_seconds > 600:
         raise ValueError("--asr-chunk-seconds must be between 1 and 600")
     if args.asr_timeout_seconds <= 0 or args.asr_max_retries < 0:
@@ -328,7 +419,10 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         videos = prioritize_oldest(iter_video_files(args.input))
         if not videos:
             raise RuntimeError(f"no supported video files found under {args.input}")
-        rates = IngestionCostRates.from_env()
+        embedding_batch_model = getattr(backends.embedding, "batch_model", None)
+        rates = IngestionCostRates.from_env(
+            embedding_model=embedding_batch_model,
+        )
         assets: dict[str, VideoAsset] = {}
         entries: list[dict[str, object]] = []
         pending_rank = 0
@@ -378,6 +472,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             artifact_root=store.root,
             video_batch_size=args.video_batch_size,
             rates=rates,
+            embedding_model=embedding_batch_model,
         )
         report["execution"] = {
             "status": "estimate_only" if args.estimate_only else "planned",
@@ -387,12 +482,15 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         report["models"] = {
             "asr": getattr(backends.asr, "model_name", None),
             "embedding": getattr(backends.embedding, "model_name", None),
+            "embedding_batch": getattr(backends.embedding, "batch_model", None),
+            "embedding_query": getattr(backends.embedding, "query_model", None),
+            "embedding_mode": args.embedding_mode,
             "embedding_dimensions": config.embedding_dimensions,
             "audio_embedding": getattr(backends.audio_embedding, "model_name", None),
         }
         report_path = write_cost_report(
             report,
-            args.cost_report or store.root / "reports" / "ingestion-cost-estimate.json",
+            args.cost_report or new_cost_report_path(store.root),
         )
         if args.estimate_only or not selected_entries:
             _print(
@@ -406,18 +504,28 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             return
 
         if backends.embedding is not None:
+            _reset_runtime_info(backends.embedding)
             try:
                 _embedding_canary(backends.embedding)
             except Exception as exc:
+                report["execution"]["canary_runtime"] = _runtime_snapshot(
+                    backends.embedding
+                )
                 report["execution"] = {
                     "status": "failed",
                     "failed_stage": "embedding_canary",
                     "error": {"type": type(exc).__name__, "message": str(exc)},
                     "completed_videos": 0,
                     "failed_videos": 0,
+                    "canary_runtime": report["execution"].get("canary_runtime"),
                 }
                 write_cost_report(report, report_path)
                 raise
+            report["execution"]["canary_runtime"] = _runtime_snapshot(
+                backends.embedding
+            )
+            reconcile_cost_report(report)
+            write_cost_report(report, report_path)
         stats: list[dict[str, object]] = []
         report["execution"]["status"] = "running"
         write_cost_report(report, report_path)
@@ -425,22 +533,25 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             asset = assets[str(entry["path"])]
             entry["execution"] = {"status": "running"}
             write_cost_report(report, report_path)
+            _reset_ingestion_runtime(backends)
             try:
                 video_stats = pipeline.ingest_asset(asset, force=args.force)
             except Exception as exc:
+                runtime = _ingestion_runtime(backends)
                 entry["execution"] = {
                     "status": "failed",
                     "error": {"type": type(exc).__name__, "message": str(exc)},
+                    "runtime": runtime,
                 }
                 report["execution"]["status"] = "failed"
                 report["execution"]["failed_videos"] += 1
                 write_cost_report(report, report_path)
                 raise
-            asr_runtime = getattr(backends.asr, "last_runtime_info", None)
+            runtime = _ingestion_runtime(backends, video_stats)
             entry["execution"] = {
                 "status": "complete",
                 "ingestion_stats": video_stats,
-                "asr_runtime": asr_runtime if isinstance(asr_runtime, dict) else None,
+                "runtime": runtime,
             }
             stats.append(video_stats)
             report["execution"]["completed_videos"] += 1
@@ -867,7 +978,32 @@ def _add_ingest_arguments(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=int(os.getenv("PATROLLENS_EMBEDDING_DIMENSIONS", "768")),
     )
-    parser.add_argument("--embedding-batch-size", type=int, default=6)
+    parser.add_argument(
+        "--embedding-mode",
+        choices=["sync", "batch"],
+        default="sync",
+        help=(
+            "Bulk embedding transport; Batch API is used only when explicitly set to batch"
+        ),
+    )
+    parser.add_argument(
+        "--embedding-batch-size",
+        type=int,
+        default=6,
+        help="Maximum embedding items submitted together in one local/API batch",
+    )
+    parser.add_argument(
+        "--embedding-batch-poll-s",
+        type=float,
+        default=float(os.getenv("PATROLLENS_EMBEDDING_BATCH_POLL_SECONDS", "10")),
+        help="Seconds between OpenRouter Batch API status checks",
+    )
+    parser.add_argument(
+        "--embedding-batch-timeout-s",
+        type=float,
+        default=float(os.getenv("PATROLLENS_EMBEDDING_BATCH_TIMEOUT_SECONDS", "86400")),
+        help="Maximum wait for each OpenRouter embedding batch",
+    )
     parser.add_argument("--no-embeddings", action="store_true")
     parser.add_argument("--no-embedding-images", action="store_true")
     parser.add_argument("--visual-model", default="google/siglip2-base-patch16-224")

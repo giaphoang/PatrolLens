@@ -29,7 +29,7 @@ flowchart LR
     subgraph OFF["1. Offline multimodal ingestion"]
         E["OpenRouter Whisper / CLAP CoreML"]
         SC["Local scene/change detection\nkeyframes + pHash dedup"]
-        GE["OpenRouter Gemini Embedding 2\nunique images + ASR text · 768-d"]
+        GE["OpenRouter Gemini Embedding 2\nsync or explicit Batch API · 768-d"]
         IDX["Timestamped evidence index"]
     end
 
@@ -69,7 +69,7 @@ SQLite/FAISS remains useful for a dependency-light local smoke test. The product
 flowchart LR
     R["Raw source video"] --> X["FFmpeg / local model extraction"]
     X --> E["Canonical pl_evidence\ncontent + timestamp + metadata + hash"]
-    E --> G["Gemini Embedding 2\nunique images + ASR text\n768-d"]
+    E --> G["Gemini Embedding 2\nsync or explicit Batch API\n768-d"]
     E --> CLAP["larger_clap_general CoreML\nraw audio windows · 512-d"]
     G --> C["pl_embedding_cache\n768-d checkpoint"]
     CLAP --> AC["pl_audio_embedding_cache\n512-d checkpoint"]
@@ -88,7 +88,7 @@ flowchart LR
 
 `pl_embeddings` intentionally duplicates the fields required to replay a hit: `video_id`, `segment_id`, `start_ms`, `end_ms`, `modality`, `source_uri`, `evidence_text`, `evidence_metadata`, `evidence_source`, `model_version`, `confidence`, `evidence_hash`, `source_sha256`, and `embedding_hash`. It also retains a foreign key to `pl_evidence`. The write path obtains the duplicated fields with `INSERT ... SELECT` from `pl_evidence JOIN pl_assets`, so an embedding cannot be created for missing evidence or an unknown video.
 
-The ingestion pipeline validates every response and immediately commits it to a dimension-specific cache keyed by content hash, modality, model, dimensions, and preprocessing version. Gemini image/text vectors use `pl_embedding_cache` and `pl_embeddings.embedding_768`; CLAP audio vectors use `pl_audio_embedding_cache` and `pl_audio_embeddings.embedding_512`. Each space has an independent cosine HNSW index. A database trigger validates duplicated provenance on direct writes and synchronizes it when canonical evidence or asset metadata changes. A failed evidence insert can therefore be retried without another model call.
+The ingestion pipeline uses synchronous Gemini image/text embedding by default. Passing `--embedding-mode batch` selects OpenRouter's Batch API and checkpoints each remote batch ID under the artifact root, allowing an interrupted process to reconnect rather than submit it again. Every returned vector is validated and committed to a dimension-specific cache keyed by content hash, modality, model, dimensions, and preprocessing version. Gemini image/text vectors use `pl_embedding_cache` and `pl_embeddings.embedding_768`; CLAP audio vectors use `pl_audio_embedding_cache` and `pl_audio_embeddings.embedding_512`. Each space has an independent cosine HNSW index. A database trigger validates duplicated provenance on direct writes and synchronizes it when canonical evidence or asset metadata changes. A failed evidence insert can therefore be retried without another model call.
 
 At retrieval time, pgvector returns the embedding row directly. The adapter reconstructs `Evidence` from that row and attaches `embedding_id`, `source_uri`, `model_version`, `evidence_hash`, `source_sha256`, and `embedding_hash` to the returned metadata. A caller can use `get_embedding_trace(embedding_id)` to retrieve the complete vector/provenance record for replay or audit.
 
@@ -110,7 +110,7 @@ flowchart LR
     AUDIO --> ASR["OpenRouter STT<br/>Whisper Large V3 Turbo"]
     CLAP_PCM --> CLAP_WIN["10 s windows · 5 s stride"]
     CLAP_WIN --> CLAP_EMB["larger_clap_general CoreML INT8<br/>safe CPU default · 512-d"]
-    DEDUP --> IMAGE_EMB["Gemini Embedding 2<br/>unique image embeddings · 768-d"]
+    DEDUP --> IMAGE_EMB["Gemini Embedding 2<br/>sync or explicit Batch API · 768-d"]
 
     ASR --> FTS["Postgres FTS / SQLite FTS5"]
     ASR --> TEXT_EMB["Gemini Embedding 2<br/>transcript embeddings"]
@@ -406,7 +406,7 @@ flowchart TD
 | Boundary | Protocol / file | Current implementation | Replacement examples |
 |---|---|---|---|
 | ASR | `ASRBackend` | OpenRouter Whisper Large V3 Turbo | faster-whisper, agency transcript |
-| Semantic embedding | `EmbeddingBackend` / `TextEncoder` | OpenRouter Gemini Embedding 2 (synchronous ingestion endpoint) | direct Gemini API, another multimodal embedding provider |
+| Semantic embedding | `EmbeddingBackend` / `TextEncoder` | OpenRouter Gemini Embedding 2 (synchronous by default, explicit Batch API option; synchronous queries) | direct Gemini API, another multimodal embedding provider |
 | Local visual fallback | `VisualBackend` / `TextEncoder` | SigLIP2 | video-native encoder, CLIP |
 | Audio semantics | `AudioEmbeddingBackend` / `TextEncoder` | larger_clap_general CoreML audio + paired ONNX text | PANNs, another paired audio-text encoder |
 | Text index | `IndexStore` | SQLite FTS5 | OpenSearch, Tantivy |

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import math
 import mimetypes
 import os
 import threading
 import time
+import urllib.error
+import urllib.request
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -14,6 +18,7 @@ from ..config import (
     DEFAULT_GEMINI_EMBEDDING_MODEL,
     DEFAULT_GEMINI_MODEL,
 )
+from ..history import response_usage
 
 if TYPE_CHECKING:
     from ..history import TrajectoryRecorder
@@ -305,9 +310,10 @@ class OpenRouterEmbeddingClient:
     """OpenRouter client for Gemini Embedding 2 text and media vectors.
 
     ``model_name`` is the canonical model namespace stored with an embedding.
-    The synchronous embeddings endpoint is the safe default for both offline
-    inputs and queries. Callers may explicitly provide a ``:batch`` model for
-    a separate asynchronous Batch API implementation.
+    Query inputs use OpenRouter's synchronous embeddings endpoint. Bulk
+    document/media inputs can either use that endpoint or OpenRouter's
+    asynchronous Batch API. Batch jobs are checkpointed so an interrupted
+    ingestion can reconnect without submitting the same paid job again.
 
     OpenRouter's embeddings endpoint represents multimodal input as an input
     object containing a ``content`` array. The object is deliberately kept at
@@ -329,19 +335,24 @@ class OpenRouterEmbeddingClient:
         timeout_s: float = 120.0,
         max_inline_media_bytes: int = DEFAULT_MAX_INLINE_MEDIA_BYTES,
         media_batch_size: int = 6,
+        batch_api: bool = False,
+        batch_poll_interval_s: float = 10.0,
+        batch_timeout_s: float = 86_400.0,
+        batch_checkpoint_dir: str | Path | None = None,
         recorder: TrajectoryRecorder | None = None,
     ) -> None:
         if dimensions <= 0 or dimensions > 3072:
             raise ValueError("Gemini Embedding 2 dimensions must be between 1 and 3072")
         if media_batch_size <= 0:
             raise ValueError("embedding media batch size must be positive")
+        if batch_poll_interval_s < 0:
+            raise ValueError("embedding batch poll interval cannot be negative")
+        if batch_timeout_s <= 0:
+            raise ValueError("embedding batch timeout must be positive")
         self.model_name = model.removesuffix(":batch")
-        self.query_model = query_model or self.model_name
-        # ``:batch`` models are not accepted by the synchronous
-        # ``/api/v1/embeddings`` endpoint. Keep sync ingestion safe by using
-        # the canonical model unless a caller explicitly opts into a separate
-        # Batch API transport.
-        self.batch_model = batch_model or self.model_name
+        self.query_model = (query_model or self.model_name).removesuffix(":batch")
+        self.batch_api_enabled = batch_api
+        self.batch_model = (batch_model or self.model_name) if batch_api else self.model_name
         self.dimensions = dimensions
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         self.base_url = base_url or os.getenv("PATROLLENS_OPENROUTER_BASE_URL", DEFAULT_OPENROUTER_BASE_URL)
@@ -350,10 +361,71 @@ class OpenRouterEmbeddingClient:
         self.timeout_s = timeout_s
         self.max_inline_media_bytes = max_inline_media_bytes
         self.media_batch_size = media_batch_size
+        self.batch_poll_interval_s = batch_poll_interval_s
+        self.batch_timeout_s = batch_timeout_s
+        self.batch_checkpoint_dir = (
+            Path(batch_checkpoint_dir).expanduser().resolve()
+            if batch_checkpoint_dir is not None
+            else None
+        )
         self.recorder = recorder
         self._client: Any = None
+        self.last_runtime_info: dict[str, Any] = {}
+        self.reset_runtime_info()
         if not self.api_key:
             raise RuntimeError("OPENROUTER_API_KEY is required for Gemini Embedding 2")
+
+    def reset_runtime_info(self) -> None:
+        """Start a fresh usage/latency ledger for the next ingestion unit."""
+
+        self.last_runtime_info = {
+            "provider": "openrouter",
+            "model": self.model_name,
+            "models": [],
+            "api_calls": 0,
+            "batch_jobs": 0,
+            "batch_poll_requests": 0,
+            "batch_checkpoint_hits": 0,
+            "input_items": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "latency_ms": 0.0,
+            "reported_cost_usd": 0.0,
+            "cost_available": True,
+            "cost_source": "not_called",
+            "usage_source": "openrouter_response.usage",
+        }
+
+    def _record_runtime(self, response: Any, *, model: str, input_count: int, started: float) -> None:
+        tokens, provider_cost = response_usage(response)
+        runtime = self.last_runtime_info
+        runtime["api_calls"] = int(runtime.get("api_calls", 0)) + 1
+        runtime["input_items"] = int(runtime.get("input_items", 0)) + input_count
+        for key in ("input", "output", "total"):
+            runtime_key = f"{key}_tokens"
+            runtime[runtime_key] = int(runtime.get(runtime_key, 0)) + tokens[key]
+        runtime["latency_ms"] = round(
+            float(runtime.get("latency_ms", 0.0))
+            + (time.monotonic() - started) * 1000,
+            3,
+        )
+        models = runtime.setdefault("models", [])
+        if model not in models:
+            models.append(model)
+        if provider_cost is None:
+            runtime["cost_available"] = False
+            runtime["reported_cost_usd"] = None
+            runtime["cost_source"] = "unavailable"
+        elif runtime.get("cost_available", True):
+            runtime["reported_cost_usd"] = round(
+                float(runtime.get("reported_cost_usd", 0.0) or 0.0)
+                + provider_cost,
+                8,
+            )
+            runtime["cost_source"] = "provider"
+        else:
+            runtime["cost_source"] = "unavailable"
 
     def _load(self) -> Any:
         if self._client is None:
@@ -376,6 +448,16 @@ class OpenRouterEmbeddingClient:
             headers["X-OpenRouter-Title"] = self.title
         return headers
 
+    def _batch_headers(self, *, request_hash: str | None = None) -> dict[str, str]:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        headers.update(self._embedding_headers())
+        if request_hash:
+            headers["Idempotency-Key"] = f"patrol-lens-embedding-{request_hash}"
+        return headers
+
     @staticmethod
     def _field(value: Any, name: str, default: Any = None) -> Any:
         if isinstance(value, dict):
@@ -384,6 +466,389 @@ class OpenRouterEmbeddingClient:
 
     _mime = staticmethod(OpenRouterJSONClient._mime)
     _audio_format = staticmethod(OpenRouterJSONClient._audio_format)
+
+    @staticmethod
+    def _utc_now() -> str:
+        return datetime.now(UTC).isoformat()
+
+    def _batch_endpoint(self) -> str:
+        base = self.base_url.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[:-3]
+        return f"{base}/beta/batches"
+
+    @staticmethod
+    def _unwrap_batch(payload: dict[str, Any]) -> dict[str, Any]:
+        data = payload.get("data")
+        if isinstance(data, dict) and ("id" in data or "status" in data):
+            return data
+        return payload
+
+    @staticmethod
+    def _http_error_detail(exc: urllib.error.HTTPError) -> str:
+        try:
+            return exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            return str(exc)
+
+    def _batch_http_json(
+        self,
+        method: str,
+        url: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        request_hash: str | None = None,
+    ) -> dict[str, Any]:
+        request = urllib.request.Request(
+            url,
+            data=(
+                json.dumps(payload, separators=(",", ":")).encode("utf-8")
+                if payload is not None
+                else None
+            ),
+            headers=self._batch_headers(request_hash=request_hash),
+            method=method,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = self._http_error_detail(exc)
+            raise RuntimeError(f"OpenRouter Batch API HTTP {exc.code}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"OpenRouter Batch API request failed: {exc.reason}") from exc
+        if not isinstance(result, dict):
+            raise RuntimeError("OpenRouter Batch API returned a non-object response")
+        return self._unwrap_batch(result)
+
+    def _batch_request_payload(self, inputs: list[Any]) -> dict[str, Any]:
+        # The Batch endpoint selects batch pricing. Its request bodies use the
+        # canonical model slug rather than forwarding ``:batch`` to the
+        # synchronous embeddings endpoint.
+        canonical_model = self.batch_model.removesuffix(":batch")
+        requests = []
+        for index, item in enumerate(inputs):
+            requests.append(
+                {
+                    "custom_id": f"embedding-{index:06d}",
+                    "body": {
+                        "model": canonical_model,
+                        "input": item,
+                        "dimensions": self.dimensions,
+                        "encoding_format": "float",
+                    },
+                }
+            )
+        return {
+            "endpoint": "/v1/embeddings",
+            "model": canonical_model,
+            "requests": requests,
+        }
+
+    @staticmethod
+    def _batch_request_hash(payload: dict[str, Any]) -> str:
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _batch_checkpoint_path(self, request_hash: str) -> Path | None:
+        if self.batch_checkpoint_dir is None:
+            return None
+        return self.batch_checkpoint_dir / f"{request_hash}.json"
+
+    @staticmethod
+    def _read_batch_checkpoint(path: Path | None) -> dict[str, Any] | None:
+        if path is None or not path.is_file():
+            return None
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    @staticmethod
+    def _write_batch_checkpoint(path: Path | None, value: dict[str, Any]) -> None:
+        if path is None:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(f"{path.suffix}.tmp-{os.getpid()}-{threading.get_ident()}")
+        temporary.write_text(json.dumps(value, indent=2), encoding="utf-8")
+        temporary.replace(path)
+
+    def _checkpoint_batch(
+        self,
+        path: Path | None,
+        *,
+        request_hash: str,
+        batch: dict[str, Any],
+        include_result: bool = False,
+    ) -> None:
+        value: dict[str, Any] = {
+            "schema_version": 1,
+            "request_hash": request_hash,
+            "batch_id": batch.get("id"),
+            "status": batch.get("status"),
+            "model": self.batch_model,
+            "dimensions": self.dimensions,
+            "updated_at": self._utc_now(),
+        }
+        if include_result:
+            value["result"] = batch
+        self._write_batch_checkpoint(path, value)
+
+    @staticmethod
+    def _batch_result_body(item: dict[str, Any]) -> dict[str, Any]:
+        error = item.get("error")
+        if error:
+            raise RuntimeError(f"OpenRouter batch item failed: {error}")
+
+        response = item.get("response")
+        if isinstance(response, dict):
+            status_code = response.get("status_code")
+            if status_code is not None and not 200 <= int(status_code) < 300:
+                raise RuntimeError(
+                    f"OpenRouter batch item returned HTTP {status_code}: {response.get('body')}"
+                )
+            body = response.get("body")
+            if isinstance(body, dict):
+                return body
+            if "data" in response:
+                return response
+
+        result = item.get("result")
+        if isinstance(result, dict):
+            nested = result.get("response")
+            if isinstance(nested, dict):
+                body = nested.get("body")
+                if isinstance(body, dict):
+                    return body
+                if "data" in nested:
+                    return nested
+            if "data" in result:
+                return result
+
+        if "data" in item:
+            return item
+        raise RuntimeError(f"OpenRouter batch item has no embedding response: {item}")
+
+    def _ordered_batch_items(
+        self,
+        batch: dict[str, Any],
+        *,
+        expected: int,
+    ) -> list[dict[str, Any]]:
+        raw_results = batch.get("results")
+        if not isinstance(raw_results, list):
+            raise RuntimeError("completed OpenRouter batch has no inline results")
+        by_id: dict[str, dict[str, Any]] = {}
+        without_id: list[dict[str, Any]] = []
+        for item in raw_results:
+            if not isinstance(item, dict):
+                raise RuntimeError("OpenRouter batch returned an invalid result item")
+            custom_id = item.get("custom_id")
+            if custom_id is None:
+                without_id.append(item)
+            else:
+                by_id[str(custom_id)] = item
+        ordered_items: list[dict[str, Any]] = []
+        for index in range(expected):
+            custom_id = f"embedding-{index:06d}"
+            item = by_id.get(custom_id)
+            if item is None and len(without_id) == expected:
+                item = without_id[index]
+            if item is None:
+                raise RuntimeError(f"OpenRouter batch result is missing {custom_id}")
+            ordered_items.append(item)
+        return ordered_items
+
+    def _batch_usage(
+        self,
+        batch: dict[str, Any],
+        *,
+        expected: int,
+    ) -> tuple[dict[str, int], float | None]:
+        """Aggregate usage from per-request batch bodies or the batch envelope."""
+
+        items = self._ordered_batch_items(batch, expected=expected)
+        bodies = [self._batch_result_body(item) for item in items]
+        has_item_usage = any(self._field(body, "usage") is not None for body in bodies)
+        if not has_item_usage:
+            return response_usage(batch)
+        totals = {"input": 0, "output": 0, "total": 0}
+        cost: float | None = 0.0
+        for body in bodies:
+            tokens, item_cost = response_usage(body)
+            for key in totals:
+                totals[key] += tokens[key]
+            if item_cost is None:
+                cost = None
+            elif cost is not None:
+                cost += item_cost
+        return totals, cost
+
+    def _record_batch_runtime(
+        self,
+        batch: dict[str, Any],
+        *,
+        input_count: int,
+        expected: int,
+        started: float,
+        poll_requests: int,
+    ) -> None:
+        tokens, provider_cost = self._batch_usage(batch, expected=expected)
+        runtime = self.last_runtime_info
+        runtime["api_calls"] = int(runtime.get("api_calls", 0)) + 1
+        runtime["batch_jobs"] = int(runtime.get("batch_jobs", 0)) + 1
+        runtime["batch_poll_requests"] = int(
+            runtime.get("batch_poll_requests", 0)
+        ) + poll_requests
+        runtime["input_items"] = int(runtime.get("input_items", 0)) + input_count
+        for key in ("input", "output", "total"):
+            runtime_key = f"{key}_tokens"
+            runtime[runtime_key] = int(runtime.get(runtime_key, 0)) + tokens[key]
+        runtime["latency_ms"] = round(
+            float(runtime.get("latency_ms", 0.0))
+            + (time.monotonic() - started) * 1000,
+            3,
+        )
+        model = self.batch_model
+        models = runtime.setdefault("models", [])
+        if model not in models:
+            models.append(model)
+        if provider_cost is None:
+            runtime["cost_available"] = False
+            runtime["reported_cost_usd"] = None
+            runtime["cost_source"] = "unavailable"
+        elif runtime.get("cost_available", True):
+            runtime["reported_cost_usd"] = round(
+                float(runtime.get("reported_cost_usd", 0.0) or 0.0)
+                + provider_cost,
+                8,
+            )
+            runtime["cost_source"] = "provider"
+        else:
+            runtime["cost_source"] = "unavailable"
+
+    def _record_batch_checkpoint_hit(self, input_count: int) -> None:
+        runtime = self.last_runtime_info
+        runtime["batch_checkpoint_hits"] = int(
+            runtime.get("batch_checkpoint_hits", 0)
+        ) + 1
+        runtime["cache_hits"] = int(runtime.get("cache_hits", 0)) + input_count
+        if int(runtime.get("api_calls", 0)) == 0:
+            runtime["cost_source"] = "checkpoint_only"
+
+    def _validated_vectors(self, data: Any, expected: int) -> list[list[float]]:
+        if not isinstance(data, list):
+            raise RuntimeError("OpenRouter returned an invalid embeddings response")
+        ordered = sorted(data, key=lambda item: int(self._field(item, "index", 0)))
+        if len(ordered) != expected:
+            raise RuntimeError(
+                f"OpenRouter returned {len(ordered)} embeddings for {expected} inputs"
+            )
+        vectors: list[list[float]] = []
+        for item in ordered:
+            raw_vector = self._field(item, "embedding")
+            if not isinstance(raw_vector, (list, tuple)) or not raw_vector:
+                raise RuntimeError("OpenRouter returned an empty embedding vector")
+            vector = [float(value) for value in raw_vector]
+            if not all(math.isfinite(value) for value in vector):
+                raise RuntimeError("OpenRouter returned a non-finite embedding vector")
+            if len(vector) != self.dimensions:
+                raise EmbeddingDimensionError(self.dimensions, len(vector))
+            vectors.append(vector)
+        return vectors
+
+    def _vectors_from_batch(
+        self,
+        batch: dict[str, Any],
+        *,
+        expected: int,
+    ) -> list[list[float]]:
+        ordered_items = self._ordered_batch_items(batch, expected=expected)
+
+        vectors: list[list[float]] = []
+        for item in ordered_items:
+            body = self._batch_result_body(item)
+            vectors.extend(self._validated_vectors(body.get("data"), 1))
+        return vectors
+
+    def _batch_request(
+        self,
+        inputs: list[Any],
+        *,
+        started: float | None = None,
+    ) -> list[list[float]]:
+        started = started or time.monotonic()
+        payload = self._batch_request_payload(inputs)
+        request_hash = self._batch_request_hash(payload)
+        checkpoint_path = self._batch_checkpoint_path(request_hash)
+        checkpoint = self._read_batch_checkpoint(checkpoint_path)
+
+        batch: dict[str, Any] | None = None
+        if checkpoint and checkpoint.get("request_hash") == request_hash:
+            saved_result = checkpoint.get("result")
+            if isinstance(saved_result, dict) and saved_result.get("status") == "completed":
+                self._record_batch_checkpoint_hit(len(inputs))
+                return self._vectors_from_batch(saved_result, expected=len(inputs))
+            if checkpoint.get("status") not in {
+                "failed",
+                "canceled",
+                "cancelled",
+                "expired",
+            }:
+                batch_id = checkpoint.get("batch_id")
+                if batch_id:
+                    batch = {"id": str(batch_id), "status": checkpoint.get("status")}
+
+        if batch is None:
+            batch = self._batch_http_json(
+                "POST",
+                self._batch_endpoint(),
+                payload=payload,
+                request_hash=request_hash,
+            )
+            if not batch.get("id"):
+                raise RuntimeError("OpenRouter Batch API did not return a batch id")
+            self._checkpoint_batch(
+                checkpoint_path,
+                request_hash=request_hash,
+                batch=batch,
+                include_result=str(batch.get("status", "")).lower() == "completed",
+            )
+
+        batch_id = str(batch["id"])
+        deadline = time.monotonic() + self.batch_timeout_s
+        terminal = {"completed", "failed", "canceled", "cancelled", "expired"}
+        poll_requests = 0
+        while str(batch.get("status", "")).lower() not in terminal:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"OpenRouter embedding batch {batch_id} did not finish within "
+                    f"{self.batch_timeout_s:g}s; rerun ingestion to resume polling"
+                )
+            if self.batch_poll_interval_s:
+                time.sleep(min(self.batch_poll_interval_s, max(0.0, deadline - time.monotonic())))
+            batch = self._batch_http_json("GET", f"{self._batch_endpoint()}/{batch_id}")
+            poll_requests += 1
+            self._checkpoint_batch(
+                checkpoint_path,
+                request_hash=request_hash,
+                batch=batch,
+                include_result=str(batch.get("status", "")).lower() == "completed",
+            )
+
+        status = str(batch.get("status", "")).lower()
+        if status != "completed":
+            detail = batch.get("error") or batch.get("errors") or batch.get("request_counts")
+            raise RuntimeError(f"OpenRouter embedding batch {batch_id} ended as {status}: {detail}")
+        self._record_batch_runtime(
+            batch,
+            input_count=len(inputs),
+            expected=len(inputs),
+            started=started,
+            poll_requests=poll_requests,
+        )
+        return self._vectors_from_batch(batch, expected=len(inputs))
 
     def _request(
         self,
@@ -394,6 +859,9 @@ class OpenRouterEmbeddingClient:
     ) -> list[list[float]]:
         if not inputs:
             return []
+        started = time.monotonic()
+        if self.batch_api_enabled and model == self.batch_model:
+            return self._batch_request(inputs, started=started)
         payload: dict[str, Any] = {
             "model": model,
             "input": inputs[0] if single_text else inputs,
@@ -409,7 +877,6 @@ class OpenRouterEmbeddingClient:
         if headers:
             payload["extra_headers"] = headers
         request_id: str | None = None
-        started = time.monotonic()
         if self.recorder:
             request_id, started = self.recorder.model_request(
                 model=model,
@@ -430,6 +897,12 @@ class OpenRouterEmbeddingClient:
                     started_monotonic=started,
                 )
             raise
+        self._record_runtime(
+            response,
+            model=model,
+            input_count=len(inputs),
+            started=started,
+        )
         if self.recorder and request_id is not None:
             self.recorder.model_response(
                 response,
@@ -439,25 +912,7 @@ class OpenRouterEmbeddingClient:
                 output_summary={"embedding_count": len(self._field(response, "data", []) or [])},
             )
         data = self._field(response, "data", []) or []
-        if not isinstance(data, list):
-            raise RuntimeError("OpenRouter returned an invalid embeddings response")
-        ordered = sorted(data, key=lambda item: int(self._field(item, "index", 0)))
-        if len(ordered) != len(inputs):
-            raise RuntimeError(
-                f"OpenRouter returned {len(ordered)} embeddings for {len(inputs)} inputs"
-            )
-        vectors: list[list[float]] = []
-        for item in ordered:
-            raw_vector = self._field(item, "embedding")
-            if not isinstance(raw_vector, (list, tuple)) or not raw_vector:
-                raise RuntimeError("OpenRouter returned an empty embedding vector")
-            vector = [float(value) for value in raw_vector]
-            if not all(math.isfinite(value) for value in vector):
-                raise RuntimeError("OpenRouter returned a non-finite embedding vector")
-            if len(vector) != self.dimensions:
-                raise EmbeddingDimensionError(self.dimensions, len(vector))
-            vectors.append(vector)
-        return vectors
+        return self._validated_vectors(data, len(inputs))
 
     @staticmethod
     def _document_text(text: str) -> str:
@@ -477,7 +932,7 @@ class OpenRouterEmbeddingClient:
         )[0]
 
     def encode_texts(self, texts: list[str]) -> list[list[float]]:
-        """Encode document text using the configured synchronous model."""
+        """Encode document text using the configured bulk model."""
 
         if not texts:
             return []
@@ -490,6 +945,11 @@ class OpenRouterEmbeddingClient:
                 )
             )
         return vectors
+
+    def canary_ingestion(self) -> list[float]:
+        """Exercise the selected ingestion transport and validate its dimensions."""
+
+        return self.encode_texts(["PatrolLens embedding dimension canary"])[0]
 
     encode_documents = encode_texts
 

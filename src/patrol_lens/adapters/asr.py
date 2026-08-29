@@ -14,6 +14,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Iterator, Protocol
 
+from ..history import response_usage
+
 
 DEFAULT_OPENROUTER_ASR_MODEL = "openai/whisper-large-v3-turbo"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -57,6 +59,20 @@ class FasterWhisperASR:
         self.compute_type = compute_type
         self.word_timestamps = word_timestamps
         self._model = None
+        self.last_runtime_info: dict[str, Any] = {}
+        self.reset_runtime_info()
+
+    def reset_runtime_info(self) -> None:
+        self.last_runtime_info = {
+            "provider": "local",
+            "model": self.model_name,
+            "api_calls": 0,
+            "cache_hits": 0,
+            "latency_ms": 0.0,
+            "reported_cost_usd": 0.0,
+            "cost_available": True,
+            "cost_source": "local_zero",
+        }
 
     def _load(self):
         if self._model is None:
@@ -75,6 +91,7 @@ class FasterWhisperASR:
         return self._model
 
     def transcribe(self, audio_path: str) -> list[WordSpan]:
+        started = time.perf_counter()
         segments, _info = self._load().transcribe(
             audio_path,
             word_timestamps=self.word_timestamps,
@@ -115,6 +132,11 @@ class FasterWhisperASR:
                     confidence,
                 )
             )
+        self.last_runtime_info["latency_ms"] = round(
+            (time.perf_counter() - started) * 1000,
+            3,
+        )
+        self.last_runtime_info["segments"] = len(spans)
         return spans
 
 
@@ -165,8 +187,25 @@ class OpenRouterASR:
         self.timeout_s = timeout_s
         self.max_retries = max_retries
         self.last_runtime_info: dict[str, Any] = {}
+        self.reset_runtime_info()
         if not self.api_key:
             raise RuntimeError("OPENROUTER_API_KEY is required for remote transcription")
+
+    def reset_runtime_info(self) -> None:
+        self.last_runtime_info = {
+            "provider": "openrouter",
+            "model": self.model_name,
+            "api_calls": 0,
+            "cache_hits": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "latency_ms": 0.0,
+            "reported_cost_usd": 0.0,
+            "cost_available": True,
+            "cost_source": "not_called",
+            "usage_source": "openrouter_response.usage",
+        }
 
     @staticmethod
     def _cache_root(audio_path: Path) -> Path:
@@ -345,14 +384,12 @@ class OpenRouterASR:
         return spans
 
     @staticmethod
-    def _usage_cost(response: dict[str, Any]) -> float:
-        usage = response.get("usage") or {}
-        try:
-            return float(usage.get("cost") or 0)
-        except (TypeError, ValueError):
-            return 0.0
+    def _usage_cost(response: dict[str, Any]) -> float | None:
+        _tokens, cost = response_usage(response)
+        return cost
 
     def transcribe(self, audio_path: str) -> list[WordSpan]:
+        started = time.perf_counter()
         source = Path(audio_path).expanduser().resolve()
         if not source.is_file():
             raise FileNotFoundError(source)
@@ -360,6 +397,10 @@ class OpenRouterASR:
         api_calls = 0
         cache_hits = 0
         cost = 0.0
+        cost_available = True
+        input_tokens = 0
+        output_tokens = 0
+        total_tokens = 0
         with TemporaryDirectory(prefix="patrol-lens-openrouter-asr-") as temp_dir:
             for chunk in self._iter_chunks(source, Path(temp_dir)):
                 cache_path = self._cache_path(source, chunk)
@@ -375,13 +416,35 @@ class OpenRouterASR:
                     temporary.replace(cache_path)
                     spans.extend(parsed)
                     api_calls += 1
-                    cost += self._usage_cost(response)
+                    tokens, usage_cost = response_usage(response)
+                    input_tokens += tokens["input"]
+                    output_tokens += tokens["output"]
+                    total_tokens += tokens["total"]
+                    if usage_cost is None:
+                        cost_available = False
+                    else:
+                        cost += usage_cost
                     continue
                 spans.extend(self._parse_segments(response, chunk))
         self.last_runtime_info = {
+            "provider": "openrouter",
+            "model": self.model_name,
             "api_calls": api_calls,
             "cache_hits": cache_hits,
-            "reported_cost_usd": round(cost, 8),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "latency_ms": round((time.perf_counter() - started) * 1000, 3),
+            "reported_cost_usd": round(cost, 8) if cost_available else None,
+            "cost_available": cost_available,
+            "cost_source": (
+                "provider"
+                if api_calls and cost_available
+                else "unavailable"
+                if api_calls
+                else "cache_only"
+            ),
+            "usage_source": "openrouter_response.usage",
             "chunk_seconds": self.chunk_seconds,
         }
         return sorted(spans, key=lambda item: (item.start_ms, item.end_ms))

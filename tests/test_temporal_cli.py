@@ -28,6 +28,7 @@ def test_cli_exposes_new_lifecycle():
     assert ingest.video_batch_size is None
     assert ingest.cost_report is None
     assert ingest.estimate_only is False
+    assert ingest.embedding_mode == "sync"
     batched_ingest = parser.parse_args(
         ["ingest", "videos", "--video-batch-size", "3", "--estimate-only"]
     )
@@ -54,19 +55,38 @@ def test_cli_exposes_new_lifecycle():
     assert parser.parse_args(["doctor"]).command == "doctor"
 
 
-def test_ingestion_embedding_uses_base_environment_model(monkeypatch):
+def test_ingestion_embedding_uses_configured_environment_models(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("PATROLLENS_EMBEDDING_MODEL", "google/gemini-embedding-2")
     monkeypatch.setenv("PATROLLENS_EMBEDDING_BATCH_MODEL", "google/gemini-embedding-2:batch")
     monkeypatch.setenv("PATROLLENS_EMBEDDING_QUERY_MODEL", "google/gemini-embedding-2")
+    monkeypatch.setenv("PATROLLENS_EMBEDDING_MODE", "batch")
 
-    args = build_parser().parse_args(["ingest", "videos"])
+    args = build_parser().parse_args(
+        [
+            "ingest",
+            "videos",
+            "--embedding-mode",
+            "batch",
+            "--embedding-batch-poll-s",
+            "2",
+            "--embedding-batch-timeout-s",
+            "60",
+        ]
+    )
     embedding = _embedding(args)
 
     assert embedding.model_name == "google/gemini-embedding-2"
-    assert embedding.batch_model == "google/gemini-embedding-2"
+    assert embedding.batch_model == "google/gemini-embedding-2:batch"
     assert embedding.query_model == "google/gemini-embedding-2"
+    assert embedding.batch_api_enabled is True
+    assert embedding.batch_poll_interval_s == 2
+    assert embedding.batch_timeout_s == 60
     assert not hasattr(args, "embedding_batch_model")
+
+    synchronous = _embedding(build_parser().parse_args(["ingest", "videos"]))
+    assert synchronous.batch_api_enabled is False
+    assert synchronous.batch_model == "google/gemini-embedding-2"
 
 
 def test_offline_ingestion_defaults_to_openrouter_asr(monkeypatch):
