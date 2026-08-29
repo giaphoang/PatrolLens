@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 
 DEFAULT_GEMINI_MODEL = "google/gemini-3.1-pro-preview"
@@ -38,28 +37,6 @@ class RetrievalConfig:
     candidate_padding_ms: int = 5_000
     max_candidate_ms: int = 45_000
     require_conjunctive_modalities: bool = True
-
-
-@dataclass(frozen=True)
-class AgentConfig:
-    model: str = DEFAULT_GEMINI_MODEL
-    planner_model: str = DEFAULT_GEMINI_MODEL
-    max_turns: int = 5
-    max_frames_per_action: int = 12
-    max_audio_ms: int = 30_000
-    max_clip_ms: int = 20_000
-    max_inline_media_bytes: int = 18 * 1024 * 1024
-    run_root: str = ".patrol-lens/runs"
-
-    @classmethod
-    def from_env(cls, *, model: str | None = None, planner_model: str | None = None) -> AgentConfig:
-        resolved = model or os.getenv("PATROLLENS_GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
-        return cls(
-            model=resolved,
-            planner_model=planner_model or os.getenv("PATROLLENS_GEMINI_PLANNER_MODEL", resolved),
-            max_turns=int(os.getenv("PATROLLENS_AGENT_MAX_TURNS", "5")),
-            run_root=os.getenv("PATROLLENS_RUN_ROOT", ".patrol-lens/runs"),
-        )
 
 
 @dataclass(frozen=True)

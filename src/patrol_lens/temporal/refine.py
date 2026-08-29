@@ -8,7 +8,6 @@ from statistics import median
 from typing import Any, Protocol
 
 from ..adapters.media import extract_audio_segment, extract_clip
-from ..agent.memory import EvidenceMemory
 from ..config import RefinementConfig
 from ..domain import CandidateInterval, QueryPlan, VerificationResult, VideoAsset
 
@@ -90,7 +89,7 @@ class LightweightTimestampRefiner:
         candidate: CandidateInterval,
         asset: VideoAsset,
         verification: VerificationResult,
-        memory: EvidenceMemory,
+        workspace: str | Path,
     ) -> VerificationResult:
         if verification.status != "supported":
             return verification
@@ -100,12 +99,14 @@ class LightweightTimestampRefiner:
             center = (verification.start_ms + verification.end_ms) // 2
             start = max(candidate.start_ms, center - 10_000)
             end = min(candidate.end_ms, start + 20_000)
-        clip_path = memory.run_dir / f"refine-{start}-{end}.mp4"
+        run_dir = Path(workspace).expanduser().resolve()
+        run_dir.mkdir(parents=True, exist_ok=True)
+        clip_path = run_dir / f"refine-{start}-{end}.mp4"
         extract_clip(asset.path, start, end, clip_path, fps=self.config.frame_fps)
         media = [str(clip_path)]
         onset: int | None = None
         if asset.has_audio:
-            audio_path = memory.run_dir / f"refine-{start}-{end}.wav"
+            audio_path = run_dir / f"refine-{start}-{end}.wav"
             extract_audio_segment(asset.path, start, end, audio_path)
             media.append(str(audio_path))
             if plan.target == "onset" and "audio_event" in plan.required_modalities:

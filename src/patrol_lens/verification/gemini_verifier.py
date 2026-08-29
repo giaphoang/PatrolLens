@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Protocol
 
-from ..agent.gemini_agent import AgentRunResult
 from ..domain import CandidateInterval, QueryPlan, VerificationResult, VideoAsset
+from .direct_media import DirectVerificationContext
 
 
 class JSONGenerator(Protocol):
@@ -45,24 +46,8 @@ VERIFICATION_SCHEMA: dict[str, Any] = {
 }
 
 
-def _selected_media(run: AgentRunResult) -> list[str]:
-    selected: list[str] = []
-    seen_kinds: set[str] = set()
-    frame_budget = 4
-    for observation in reversed(run.memory.observations):
-        kind = observation.action.type
-        if kind == "get_frames":
-            if frame_budget:
-                selected[0:0] = observation.media_paths[-frame_budget:]
-                frame_budget -= min(frame_budget, len(observation.media_paths))
-        elif kind not in seen_kinds:
-            selected[0:0] = observation.media_paths
-            seen_kinds.add(kind)
-    return selected[-8:]
-
-
 class GeminiEventVerifier:
-    """Final semantic gate: retrieval scores never become evidence confidence."""
+    """One-shot multimodal gate: retrieval scores never become confidence."""
 
     def __init__(self, client: JSONGenerator, *, model: str) -> None:
         self.client = client
@@ -74,33 +59,42 @@ class GeminiEventVerifier:
         plan: QueryPlan,
         candidate: CandidateInterval,
         asset: VideoAsset,
-        run: AgentRunResult,
+        context: DirectVerificationContext,
     ) -> VerificationResult:
-        if run.conclusion.status == "rejected":
-            return VerificationResult(
-                status="rejected",
-                event_description=run.conclusion.description,
-                start_ms=run.conclusion.start_ms,
-                end_ms=run.conclusion.end_ms,
-                confidence=run.conclusion.confidence,
-                missing_evidence=run.conclusion.missing_evidence,
-            )
+        evidence = [
+            {
+                "id": item.id,
+                "time_ms": [item.start_ms, item.end_ms],
+                "modality": item.modality,
+                "content": item.content[:1_200],
+                "confidence": round(item.confidence, 3),
+                "source": item.source,
+            }
+            for item in candidate.evidence[:60]
+        ]
+        candidate_summary = {
+            "video_id": asset.id,
+            "start_ms": candidate.start_ms,
+            "end_ms": candidate.end_ms,
+            "retrieval_score": candidate.score,
+        }
         prompt = f"""You are the independent event verifier for a body-camera search result.
 Decide whether the complete investigator query is directly supported within this candidate.
 Distinguish co-occurrence from attribution and causality: for example, a red jacket plus an
 unassociated loud voice does not prove that the red-jacket person shouted. Treat retrieved
-ASR/OCR/audio labels as fallible auxiliary evidence. Use attached direct media and the active
-observation summaries to resolve contradictions. Prefer rejected or uncertain over unsupported
-inference. Return absolute millisecond boundaries inside [{candidate.start_ms}, {candidate.end_ms}].
+ASR/OCR/audio labels as fallible auxiliary evidence. Inspect the attached candidate clip directly
+for appearance, speech, acoustic events, action, temporal order, and speaker attribution. Prefer
+rejected or uncertain over unsupported inference. Return absolute millisecond boundaries inside
+[{context.start_ms}, {context.end_ms}]. Include exact transcript excerpts relevant to the event.
 
 Query: {query}
 Structured plan: {plan.to_dict()}
-Agent proposal: {run.conclusion}
-Evidence memory: {run.memory.compact_context()}"""
+Candidate: {json.dumps(candidate_summary, separators=(",", ":"))}
+Retrieved timestamped evidence: {json.dumps(evidence, separators=(",", ":"))}"""
         data = self.client.generate_json(
             prompt,
             VERIFICATION_SCHEMA,
-            media_paths=_selected_media(run),
+            media_paths=list(context.media_paths),
             model=self.model,
         )
         warnings: list[str] = []
@@ -109,8 +103,8 @@ Evidence memory: {run.memory.compact_context()}"""
         if end < start:
             start, end = end, start
             warnings.append("verifier_interval_reordered")
-        clamped_start = max(candidate.start_ms, min(candidate.end_ms, start))
-        clamped_end = max(clamped_start, min(candidate.end_ms, end))
+        clamped_start = max(context.start_ms, min(context.end_ms, start))
+        clamped_end = max(clamped_start, min(context.end_ms, end))
         if (clamped_start, clamped_end) != (start, end):
             warnings.append("verifier_interval_clamped")
         raw_evidence = dict(data.get("evidence", {}))

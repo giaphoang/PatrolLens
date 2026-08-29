@@ -172,7 +172,7 @@ def test_adjacent_equivalent_frames_extend_one_keyframe_interval(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="FFmpeg unavailable")
-def test_active_media_tools_extract_bounded_artifacts(tmp_path):
+def test_media_extractors_create_bounded_artifacts(tmp_path):
     source = tmp_path / "source.mp4"
     subprocess.run(
         [

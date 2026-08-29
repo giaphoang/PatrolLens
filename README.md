@@ -4,7 +4,7 @@ PatrolLens makes long body-worn camera video searchable with natural-language qu
 
 The implementation follows one rule:
 
-> Cheap local models find where to look → Gemini determines what happened → targeted re-inspection determines exactly when.
+> Cheap local models find where to look → Gemini verifies the retrieved clip → targeted refinement determines exactly when.
 
 It is not frame pooling and it does not upload an entire 90-minute video for every query.
 
@@ -31,13 +31,8 @@ flowchart LR
         FUSE["Temporal join + weighted RRF"]
     end
 
-    subgraph ACTIVE["3. Active perception"]
-        AGENT["Gemini 3.1 Pro"]
-        TOOLS["get_frames · get_audio · get_clip"]
-        MEM["Durable evidence memory"]
-    end
-
-    VERIFY["4. Independent Gemini event verifier"]
+    RERANK["3. Lightweight candidate reranking"]
+    VERIFY["4. Direct Gemini multimodal verification<br/>one candidate clip · one call"]
     REFINE["5. High-resolution timestamp refinement"]
     TL["Optional TimeLens2 adapter"]
     OUT["video + [start,end]<br/>confidence + evidence"]
@@ -48,9 +43,7 @@ flowchart LR
     FF --> EXACT --> IDX
     FF --> CLAP --> IDX
     Q["Investigator query"] --> PLAN --> PAR
-    IDX --> PAR --> FUSE --> AGENT
-    AGENT --> TOOLS --> MEM --> AGENT
-    AGENT --> VERIFY --> REFINE --> OUT
+    IDX --> PAR --> FUSE --> RERANK --> VERIFY --> REFINE --> OUT
     REFINE -. "broad or low-quality interval" .-> TL -.-> OUT
 ```
 
@@ -113,8 +106,8 @@ PatrolLens uses `https://openrouter.ai/api/v1`; it does not use the direct
 provider SDKs. Ingestion sends five-minute extracted WAV chunks to the dedicated
 OpenRouter transcription endpoint using `PATROLLENS_ASR_MODEL`, then sends
 deduplicated keyframe images and ASR text through the embeddings endpoint.
-Raw video is sent only after coarse retrieval through bounded active-perception
-tools.
+Raw video is sent only after coarse retrieval, as one bounded clip for direct
+multimodal verification of each selected candidate.
 
 Set the embedding models and vector size in the environment when resuming or rebuilding an index:
 
@@ -308,7 +301,7 @@ patrol-lens ingest compressed_video_corpus \
   --profile full
 ```
 
-Use the same `--backend postgres --database-url ...` flags for `retrieve`, `search`, and `evaluate`. `--index` remains the local artifact root for extracted frames, audio, and agent memory; the PostgreSQL DSN is only for the canonical evidence/index database.
+Use the same `--backend postgres --database-url ...` flags for `retrieve`, `search`, and `evaluate`. `--index` remains the local artifact root for extracted media, direct-verification workspaces, and history; the PostgreSQL DSN is only for the canonical evidence/index database.
 
 ```mermaid
 flowchart LR
@@ -363,18 +356,17 @@ patrol-lens search \
   --planner-model google/gemini-3.1-flash-lite \
   --model google/gemini-3.7-flash \
   --max-candidates 10 \
-  --max-turns 2 \
   --candidate-parallelism 4 \
   --early-stop-confidence 0.90 \
   --search-timeout-s 300 \
   --max-run-cost-usd 1.00
 ```
 
-Candidate workers are bounded; each worker retains its own sequential active-
-perception turn loop. A directly grounded supported result at or above the
-early-stop threshold claims a single thread-safe winner, prevents new
+Candidate workers are bounded; each worker extracts one candidate clip and
+makes one direct multimodal verification call. A supported result at or above
+the early-stop threshold claims a single thread-safe winner, prevents new
 candidate work, and proceeds to refinement. The global deadline includes
-retrieval, inspection, verification, and refinement. At timeout, PatrolLens
+retrieval, media preparation, verification, and refinement. At timeout, PatrolLens
 returns the best supported result already obtained, or an empty result with a
 `search_timeout_no_supported_result` warning. Before candidate inference, the
 cost guard records a conservative upper-bound estimate. It denies work that
@@ -391,7 +383,7 @@ INDEX/history/RUN_ID/summary.json
 ```
 
 The versioned JSONL trajectory is appended and flushed throughout planning,
-retrieval, candidate inspection, media actions, model calls, verification, and
+retrieval, candidate reranking, direct media preparation, model calls, verification, and
 refinement. Parallel candidates retain independent `candidate_id` branches.
 Media is referenced by path and is never copied into history. `summary.json`
 retains the best partial result, completed stage, elapsed time, usage/cost, and
@@ -497,11 +489,11 @@ The evaluator reports recall@K and mean best temporal IoU. Production evaluation
 uv run --extra dev pytest -q
 ```
 
-Tests cover normalized storage, independent 768-d/512-d guards, CLAP windowing and checkpoint recovery, additive audio backfill, keyframe deduplication, FTS/vector retrieval, multimodal temporal joining, active-perception control, restartable ingestion, TimeLens2 gating, CLI contracts, and real FFmpeg extraction.
+Tests cover normalized storage, independent 768-d/512-d guards, CLAP windowing and checkpoint recovery, additive audio backfill, keyframe deduplication, FTS/vector retrieval, multimodal temporal joining, direct candidate verification, restartable ingestion, TimeLens2 gating, CLI contracts, and real FFmpeg extraction.
 
 ## Privacy boundary
 
-Raw corpus video, extracted transcripts, indexes, and agent memory remain local.
+Raw corpus video, extracted transcripts, indexes, and verification workspaces remain local.
 Offline indexing sends deduplicated keyframe images, transcript text, and
 five-minute audio chunks to OpenRouter. Query-time search sends the investigator
 query, and active search sends only selected short observations after coarse

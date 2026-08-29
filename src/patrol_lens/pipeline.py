@@ -6,7 +6,6 @@ import time
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol
 
-from .agent.gemini_agent import ActivePerceptionAgent, AgentRunResult
 from .config import SearchConfig
 from .domain import (
     CandidateInterval,
@@ -21,9 +20,23 @@ from .index.sqlite_store import IndexStore
 from .retrieval.search import CoarseRetriever
 from .temporal.refine import LightweightTimestampRefiner
 from .temporal.timelens2_adapter import TimeLens2Adapter, should_use_timelens2
+from .verification import DirectVerificationContext
 
 if TYPE_CHECKING:
     from .history import TrajectoryRecorder
+
+
+class CandidateMediaProvider(Protocol):
+    def prepare(
+        self,
+        query: str,
+        plan: QueryPlan,
+        candidate: CandidateInterval,
+        asset: VideoAsset,
+        *,
+        cancel_event: threading.Event | None = None,
+        deadline: float | None = None,
+    ) -> DirectVerificationContext: ...
 
 
 class EventVerifier(Protocol):
@@ -33,7 +46,7 @@ class EventVerifier(Protocol):
         plan: QueryPlan,
         candidate: CandidateInterval,
         asset: VideoAsset,
-        run: AgentRunResult,
+        context: DirectVerificationContext,
     ) -> VerificationResult: ...
 
 
@@ -99,13 +112,13 @@ class _SearchControl:
 
 
 class SearchPipeline:
-    """Retrieve cheaply, inspect actively, verify semantically, then ground precisely."""
+    """Retrieve broadly, rerank cheaply, verify directly, then ground precisely."""
 
     def __init__(
         self,
         store: IndexStore | PostgresIndexStore,
         retriever: CoarseRetriever,
-        agent: ActivePerceptionAgent,
+        media_provider: CandidateMediaProvider,
         verifier: EventVerifier,
         refiner: LightweightTimestampRefiner,
         *,
@@ -115,7 +128,7 @@ class SearchPipeline:
     ) -> None:
         self.store = store
         self.retriever = retriever
-        self.agent = agent
+        self.media_provider = media_provider
         self.verifier = verifier
         self.refiner = refiner
         self.timelens2 = timelens2
@@ -136,6 +149,50 @@ class SearchPipeline:
     @staticmethod
     def _deadline_reached(deadline: float | None) -> bool:
         return deadline is not None and time.monotonic() >= deadline
+
+    def _rerank_candidates(
+        self,
+        plan: QueryPlan,
+        candidates: list[CandidateInterval],
+    ) -> list[CandidateInterval]:
+        """Prefer required-modality coverage, then preserve retrieval scoring."""
+
+        required = set(plan.required_modalities)
+
+        def key(candidate: CandidateInterval) -> tuple[int, int, int, float, float]:
+            covered = set(candidate.covered_modalities)
+            covered.update(item.modality for item in candidate.evidence)
+            matched = len(required & covered)
+            missing = len(required - covered)
+            diversity = len(candidate.branch_scores)
+            evidence_confidence = max(
+                (item.confidence for item in candidate.evidence),
+                default=0.0,
+            )
+            return (-missing, matched, diversity, candidate.score, evidence_confidence)
+
+        ranked = sorted(candidates, key=key, reverse=True)
+        if self.recorder:
+            self.recorder.emit(
+                "candidate_reranking_completed",
+                stage="candidate_reranking",
+                status="completed",
+                output_summary={
+                    "method": "required_modality_coverage_then_retrieval_score",
+                    "candidate_count": len(ranked),
+                    "candidates": [
+                        {
+                            "candidate_id": item.id,
+                            "rank": rank,
+                            "retrieval_score": item.score,
+                            "covered_modalities": item.covered_modalities,
+                            "missing_modalities": item.missing_modalities,
+                        }
+                        for rank, item in enumerate(ranked, start=1)
+                    ],
+                },
+            )
+        return ranked
 
     @staticmethod
     def _as_result(
@@ -171,7 +228,7 @@ class SearchPipeline:
         candidate: CandidateInterval,
         asset: VideoAsset,
         verification: VerificationResult,
-        run: AgentRunResult,
+        context: DirectVerificationContext,
         *,
         control: _SearchControl | None = None,
         deadline: float | None = None,
@@ -196,11 +253,11 @@ class SearchPipeline:
             if self.recorder:
                 with self.recorder.scope(stage="refinement", parent_id=refinement_event):
                     grounded = self.refiner.refine(
-                        query, plan, candidate, asset, verification, run.memory
+                        query, plan, candidate, asset, verification, context.workspace
                     )
             else:
                 grounded = self.refiner.refine(
-                    query, plan, candidate, asset, verification, run.memory
+                    query, plan, candidate, asset, verification, context.workspace
                 )
         except Exception as exc:  # noqa: BLE001 - verified interval remains a safe fallback
             grounded = replace(
@@ -275,24 +332,21 @@ class SearchPipeline:
         if control and control.cancel_event.is_set():
             return _CandidateOutcome(candidate.id, cancelled=True)
         try:
-            if control is None:
-                run = self.agent.inspect(query, plan, candidate, asset)
-            else:
-                run = self.agent.inspect(
-                    query,
-                    plan,
-                    candidate,
-                    asset,
-                    cancel_event=control.cancel_event,
-                    deadline=deadline,
-                )
+            context = self.media_provider.prepare(
+                query,
+                plan,
+                candidate,
+                asset,
+                cancel_event=control.cancel_event if control else None,
+                deadline=deadline,
+            )
             if self._deadline_reached(deadline):
                 if control:
                     control.cancel()
                 return _CandidateOutcome(candidate.id, cancelled=True)
             if control and control.cancel_event.is_set() and not control.is_winner(candidate.id):
                 return _CandidateOutcome(candidate.id, cancelled=True)
-            verification = self.verifier.verify(query, plan, candidate, asset, run)
+            verification = self.verifier.verify(query, plan, candidate, asset, context)
         except Exception as exc:  # noqa: BLE001 - isolate one failed candidate/provider call
             if control and control.cancel_event.is_set():
                 return _CandidateOutcome(candidate.id, cancelled=True)
@@ -309,7 +363,7 @@ class SearchPipeline:
             )
 
         direct_satisfied = self._required_direct_modalities(plan).issubset(
-            run.memory.direct_modalities()
+            context.direct_modalities
         )
         qualifies = bool(
             control
@@ -329,7 +383,7 @@ class SearchPipeline:
                 confidence=verification.confidence,
                 output_summary={
                     "threshold": self.config.early_stop_confidence,
-                    "direct_modalities": sorted(run.memory.direct_modalities()),
+                    "direct_modalities": sorted(context.direct_modalities),
                 },
             )
         provisional = self._as_result(
@@ -360,7 +414,7 @@ class SearchPipeline:
             candidate,
             asset,
             verification,
-            run,
+            context,
             control=control,
             deadline=deadline,
         )
@@ -501,10 +555,7 @@ class SearchPipeline:
             return False
         estimate = self.recorder.estimate_cost(
             candidate_count=candidate_count,
-            calls_per_candidate=getattr(
-                getattr(self.agent, "config", None), "max_turns", 5
-            )
-            + 2,
+            calls_per_candidate=2,
         )
         if (
             self.config.max_run_cost_usd is not None
@@ -519,7 +570,7 @@ class SearchPipeline:
         results: list[EvidenceResult] = []
         warnings: list[str] = []
         examined = 0
-        selected = candidates[:max_candidates]
+        selected = self._rerank_candidates(plan, candidates)[:max_candidates]
         if self._preflight_budget(len(selected)):
             return self._response(
                 query,
@@ -611,7 +662,8 @@ class SearchPipeline:
 
         warnings: list[str] = []
         tasks: list[tuple[CandidateInterval, VideoAsset, int]] = []
-        for rank, candidate in enumerate(candidates[:max_candidates], start=1):
+        ranked = self._rerank_candidates(plan, candidates)
+        for rank, candidate in enumerate(ranked[:max_candidates], start=1):
             asset = self.store.get_asset(candidate.video_id)
             if asset is None:
                 warnings.append(f"missing_asset:{candidate.video_id}")

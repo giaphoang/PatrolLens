@@ -15,7 +15,6 @@ Modality = Literal[
 ]
 Relation = Literal["overlap", "before", "after", "sequence", "any"]
 SupportStatus = Literal["supported", "rejected", "uncertain"]
-ActionType = Literal["get_frames", "get_audio", "get_clip", "answer"]
 
 
 def jsonable(value: Any) -> Any:
@@ -174,62 +173,6 @@ class CandidateInterval:
             "missing_modalities": list(self.missing_modalities),
             "metadata": dict(self.metadata),
         }
-
-
-@dataclass(frozen=True)
-class AgentAction:
-    type: ActionType
-    start_ms: int | None = None
-    end_ms: int | None = None
-    fps: float | None = None
-    num_frames: int | None = None
-    answer: str | None = None
-    status: SupportStatus | None = None
-    confidence: float | None = None
-
-    def signature(self) -> str:
-        return f"{self.type}:{self.start_ms}:{self.end_ms}:{self.fps}:{self.num_frames}:{self.answer}"
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass
-class ToolObservation:
-    id: str
-    action: AgentAction
-    start_ms: int
-    end_ms: int
-    media_paths: list[str] = field(default_factory=list)
-    summary: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "action": self.action.to_dict(),
-            "start_ms": self.start_ms,
-            "end_ms": self.end_ms,
-            "media_paths": list(self.media_paths),
-            "summary": self.summary,
-            "metadata": dict(self.metadata),
-        }
-
-
-@dataclass(frozen=True)
-class AgentDecision:
-    assessment: str
-    action: AgentAction
-
-
-@dataclass(frozen=True)
-class AgentConclusion:
-    status: SupportStatus
-    description: str
-    start_ms: int
-    end_ms: int
-    confidence: float
-    missing_evidence: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

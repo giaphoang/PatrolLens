@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +10,7 @@ from patrol_lens.config import SearchConfig
 from patrol_lens.domain import CandidateInterval, QueryPlan, VerificationResult, VideoAsset
 from patrol_lens.history import TrajectoryRecorder, show_history
 from patrol_lens.pipeline import SearchPipeline
+from patrol_lens.verification import DirectVerificationContext
 
 
 class FakeStore:
@@ -43,15 +44,7 @@ class FakeRetriever:
         return self.plan, self.candidates
 
 
-class FakeMemory:
-    def __init__(self, direct):
-        self.direct = set(direct)
-
-    def direct_modalities(self):
-        return set(self.direct)
-
-
-class TrackingAgent:
+class TrackingMediaProvider:
     def __init__(self, delays=None, direct=None):
         self.delays = delays or {}
         self.direct = {"visual"} if direct is None else set(direct)
@@ -60,7 +53,7 @@ class TrackingAgent:
         self.max_active = 0
         self.lock = threading.Lock()
 
-    def inspect(self, _query, _plan, candidate, _asset, *, cancel_event=None, deadline=None):
+    def prepare(self, _query, _plan, candidate, _asset, *, cancel_event=None, deadline=None):
         with self.lock:
             self.started.append(candidate.id)
             self.active += 1
@@ -73,21 +66,42 @@ class TrackingAgent:
                 if deadline is not None and time.monotonic() >= deadline:
                     break
                 time.sleep(0.002)
-            return SimpleNamespace(memory=FakeMemory(self.direct))
+            return DirectVerificationContext(
+                workspace=Path("/tmp/direct-verification-test"),
+                media_paths=(f"/tmp/{candidate.id}.mp4",),
+                start_ms=candidate.start_ms,
+                end_ms=candidate.end_ms,
+                direct_modalities=frozenset(self.direct),
+            )
         finally:
             with self.lock:
                 self.active -= 1
 
 
-class LegacyAgent:
-    """Old inspect signature proves omitted controls retain the synchronous path."""
+class SequentialMediaProvider:
+    """Direct media provider for the default sequential path."""
 
     def __init__(self):
         self.started = []
 
-    def inspect(self, _query, _plan, candidate, _asset):
+    def prepare(
+        self,
+        _query,
+        _plan,
+        candidate,
+        _asset,
+        *,
+        cancel_event=None,
+        deadline=None,
+    ):
         self.started.append(candidate.id)
-        return SimpleNamespace(memory=FakeMemory({"visual"}))
+        return DirectVerificationContext(
+            workspace=Path("/tmp/direct-verification-test"),
+            media_paths=(f"/tmp/{candidate.id}.mp4",),
+            start_ms=candidate.start_ms,
+            end_ms=candidate.end_ms,
+            direct_modalities=frozenset({"visual"}),
+        )
 
 
 class FakeVerifier:
@@ -95,7 +109,7 @@ class FakeVerifier:
         self.confidences = confidences
         self.failures = set(failures or [])
 
-    def verify(self, _query, _plan, candidate, _asset, _run):
+    def verify(self, _query, _plan, candidate, _asset, _context):
         if candidate.id in self.failures:
             raise RuntimeError("provider failed")
         confidence = self.confidences.get(candidate.id, 0.8)
@@ -110,7 +124,7 @@ class FakeVerifier:
 
 
 class FakeRefiner:
-    def refine(self, _query, _plan, _candidate, _asset, verification, _memory):
+    def refine(self, _query, _plan, _candidate, _asset, verification, _workspace):
         return verification
 
 
@@ -121,7 +135,7 @@ def candidates(count=4):
     ]
 
 
-def pipeline(items, agent, verifier, config, *, retrieval_delay=0.0, recorder=None):
+def pipeline(items, media_provider, verifier, config, *, retrieval_delay=0.0, recorder=None):
     plan = QueryPlan(
         "white shirt woman starts crying",
         visual_queries=["white shirt woman crying"],
@@ -131,7 +145,7 @@ def pipeline(items, agent, verifier, config, *, retrieval_delay=0.0, recorder=No
     return SearchPipeline(
         FakeStore(items),
         FakeRetriever(plan, items, delay=retrieval_delay),
-        agent,
+        media_provider,
         verifier,
         FakeRefiner(),
         config=config,
@@ -139,42 +153,72 @@ def pipeline(items, agent, verifier, config, *, retrieval_delay=0.0, recorder=No
     )
 
 
-def test_default_search_keeps_legacy_sequential_agent_contract():
+def test_default_search_verifies_candidates_sequentially():
     items = candidates(3)
-    agent = LegacyAgent()
+    media_provider = SequentialMediaProvider()
     response = pipeline(
         items,
-        agent,
+        media_provider,
         FakeVerifier({}),
         SearchConfig(),
     ).search("query", max_candidates=3)
 
-    assert agent.started == ["c0", "c1", "c2"]
+    assert media_provider.started == ["c0", "c1", "c2"]
     assert response.candidates_examined == 3
     assert len(response.results) == 3
 
 
 def test_candidate_parallelism_is_bounded():
     items = candidates(4)
-    agent = TrackingAgent()
+    media_provider = TrackingMediaProvider()
     response = pipeline(
         items,
-        agent,
+        media_provider,
         FakeVerifier({}),
         SearchConfig(candidate_parallelism=2),
     ).search("query", max_candidates=4)
 
-    assert agent.max_active == 2
+    assert media_provider.max_active == 2
     assert response.candidates_examined == 4
     assert len(response.results) == 4
 
 
+def test_lightweight_reranking_prefers_required_modality_coverage():
+    transcript_only = CandidateInterval(
+        "transcript-only",
+        "v0",
+        0,
+        800,
+        score=0.99,
+        covered_modalities=["transcript"],
+    )
+    visual = CandidateInterval(
+        "visual",
+        "v1",
+        1_000,
+        1_800,
+        score=0.50,
+        covered_modalities=["visual"],
+    )
+    media_provider = SequentialMediaProvider()
+
+    response = pipeline(
+        [transcript_only, visual],
+        media_provider,
+        FakeVerifier({}),
+        SearchConfig(),
+    ).search("query", max_candidates=1)
+
+    assert media_provider.started == ["visual"]
+    assert response.results[0].description == "supported visual"
+
+
 def test_high_confidence_direct_result_stops_later_candidates():
     items = candidates(6)
-    agent = TrackingAgent(delays={"c0": 0.005, "c1": 0.3})
+    media_provider = TrackingMediaProvider(delays={"c0": 0.005, "c1": 0.3})
     response = pipeline(
         items,
-        agent,
+        media_provider,
         FakeVerifier({"c0": 0.95}),
         SearchConfig(candidate_parallelism=2, early_stop_confidence=0.9),
     ).search("query", max_candidates=6)
@@ -186,10 +230,10 @@ def test_high_confidence_direct_result_stops_later_candidates():
 
 def test_early_stop_requires_direct_modalities():
     items = candidates(3)
-    agent = TrackingAgent(direct=set())
+    media_provider = TrackingMediaProvider(direct=set())
     response = pipeline(
         items,
-        agent,
+        media_provider,
         FakeVerifier({"c0": 0.99}),
         SearchConfig(candidate_parallelism=2, early_stop_confidence=0.9),
     ).search("query", max_candidates=3)
@@ -200,11 +244,13 @@ def test_early_stop_requires_direct_modalities():
 
 def test_global_timeout_returns_best_supported_result_so_far():
     items = candidates(4)
-    agent = TrackingAgent(delays={"c0": 0.005, "c1": 1.0, "c2": 1.0, "c3": 1.0})
+    media_provider = TrackingMediaProvider(
+        delays={"c0": 0.005, "c1": 1.0, "c2": 1.0, "c3": 1.0}
+    )
     started = time.monotonic()
     response = pipeline(
         items,
-        agent,
+        media_provider,
         FakeVerifier({"c0": 0.82}),
         SearchConfig(candidate_parallelism=2, timeout_s=0.08),
     ).search("query", max_candidates=4)
@@ -218,7 +264,7 @@ def test_global_timeout_covers_retrieval():
     items = candidates(1)
     response = pipeline(
         items,
-        TrackingAgent(),
+        TrackingMediaProvider(),
         FakeVerifier({}),
         SearchConfig(candidate_parallelism=2, timeout_s=0.03),
         retrieval_delay=0.2,
@@ -232,7 +278,7 @@ def test_parallel_candidates_keep_provider_errors_isolated():
     items = candidates(3)
     response = pipeline(
         items,
-        TrackingAgent(),
+        TrackingMediaProvider(),
         FakeVerifier({}, failures={"c1"}),
         SearchConfig(candidate_parallelism=2),
     ).search("query", max_candidates=3)
@@ -243,7 +289,7 @@ def test_parallel_candidates_keep_provider_errors_isolated():
 
 def test_preflight_budget_denies_candidate_inference_and_persists_attempt(tmp_path):
     items = candidates(2)
-    agent = TrackingAgent()
+    media_provider = TrackingMediaProvider()
     recorder = TrajectoryRecorder(
         tmp_path,
         query="query",
@@ -253,13 +299,13 @@ def test_preflight_budget_denies_candidate_inference_and_persists_attempt(tmp_pa
     )
     response = pipeline(
         items,
-        agent,
+        media_provider,
         FakeVerifier({}),
         SearchConfig(candidate_parallelism=2, max_run_cost_usd=0.01),
         recorder=recorder,
     ).search("query", max_candidates=2)
 
-    assert agent.started == []
+    assert media_provider.started == []
     assert response.results == []
     assert "run_cost_denied:estimated_upper_bound_exceeds_limit" in response.warnings
     trajectory = show_history(tmp_path, recorder.run_id)["trajectory"]

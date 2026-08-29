@@ -9,7 +9,6 @@ import shlex
 import shutil
 import sys
 import tempfile
-from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -26,12 +25,10 @@ from .adapters.openrouter import (
     OpenRouterJSONClient,
 )
 from .adapters.visual import SigLIP2Encoder
-from .agent import ActivePerceptionAgent, GeminiActivePolicy
 from .asr_benchmark import benchmark_backend, transcript_text, word_error_rate
 from .config import (
     DEFAULT_GEMINI_EMBEDDING_MODEL,
     DEFAULT_GEMINI_MODEL,
-    AgentConfig,
     IngestionConfig,
     RetrievalConfig,
     SearchConfig,
@@ -55,7 +52,7 @@ from .history import TrajectoryRecorder, list_history, show_history
 from .pipeline import SearchPipeline
 from .retrieval import CoarseRetriever, GeminiQueryPlanner, HeuristicQueryPlanner
 from .temporal import LightweightTimestampRefiner, TimeLens2Adapter
-from .verification import GeminiEventVerifier
+from .verification import DirectCandidateMedia, GeminiEventVerifier
 
 
 def _print(payload: object) -> None:
@@ -768,18 +765,9 @@ def cmd_search(args: argparse.Namespace) -> None:
             if args.coarse_only:
                 payload = retriever.search_json(args.query)
             else:
-                base_agent_config = AgentConfig.from_env(
-                    model=args.model, planner_model=args.planner_model
-                )
-                agent_config = replace(
-                    base_agent_config,
-                    max_turns=args.max_turns,
-                    run_root=str(store.root / "runs"),
-                )
                 assert client is not None
-                agent = ActivePerceptionAgent(
-                    GeminiActivePolicy(client, model=args.model),
-                    config=agent_config,
+                media_provider = DirectCandidateMedia(
+                    store.root / "runs" / "direct-verification",
                     recorder=recorder,
                 )
                 verifier = GeminiEventVerifier(client, model=args.model)
@@ -794,7 +782,7 @@ def cmd_search(args: argparse.Namespace) -> None:
                 pipeline = SearchPipeline(
                     store,
                     retriever,
-                    agent,
+                    media_provider,
                     verifier,
                     refiner,
                     timelens2=timelens,
@@ -1136,7 +1124,7 @@ def _add_storage_arguments(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="patrol-lens",
-        description="Search body-camera footage with retrieval-guided Gemini active perception",
+        description="Search body-camera footage with retrieval-guided multimodal verification",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -1177,29 +1165,31 @@ def build_parser() -> argparse.ArgumentParser:
     _add_retrieval_arguments(retrieve)
     retrieve.set_defaults(func=cmd_retrieve)
 
-    search = commands.add_parser("search", help="Run retrieval, active perception, verification, and grounding")
+    search = commands.add_parser(
+        "search",
+        help="Run retrieval, candidate reranking, direct verification, and grounding",
+    )
     search.add_argument("query")
     _add_retrieval_arguments(search)
     search.add_argument("--model", default=os.getenv("PATROLLENS_GEMINI_MODEL", DEFAULT_GEMINI_MODEL))
     search.add_argument("--max-candidates", type=int, default=12)
-    search.add_argument("--max-turns", type=int, default=5)
     search.add_argument(
         "--candidate-parallelism",
         type=int,
         default=None,
-        help="Maximum candidates inspected concurrently; omitted keeps sequential search",
+        help="Maximum candidates verified concurrently; omitted keeps sequential search",
     )
     search.add_argument(
         "--early-stop-confidence",
         type=float,
         default=None,
-        help="Stop after directly grounded supported evidence reaches this confidence",
+        help="Stop after directly verified supported evidence reaches this confidence",
     )
     search.add_argument(
         "--search-timeout-s",
         type=float,
         default=None,
-        help="Global deadline covering retrieval, inspection, verification, and refinement",
+        help="Global deadline covering retrieval, media preparation, verification, and refinement",
     )
     search.add_argument(
         "--max-run-cost-usd",

@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from patrol_lens.agent.gemini_agent import AgentRunResult
-from patrol_lens.agent.memory import EvidenceMemory
-from patrol_lens.domain import AgentConclusion, CandidateInterval, QueryPlan, VideoAsset
-from patrol_lens.verification import GeminiEventVerifier
+from patrol_lens.domain import CandidateInterval, QueryPlan, VideoAsset
+from patrol_lens.verification import DirectVerificationContext, GeminiEventVerifier
 
 
 class FakeClient:
     def generate_json(self, _prompt, _schema, *, media_paths=None, model=None):
         assert model == "gemini-test"
+        assert media_paths == ["/tmp/candidate.mp4"]
         return {
             "status": "supported",
             "event_description": "person is handcuffed",
@@ -28,11 +27,12 @@ class FakeClient:
 def test_verifier_is_independent_and_clamps_interval(tmp_path):
     candidate = CandidateInterval("c", "v", 10_000, 30_000)
     plan = QueryPlan("handcuffed", visual_queries=["handcuffing"], required_modalities=["visual"])
-    memory = EvidenceMemory(plan.original_text, plan, candidate, tmp_path)
-    run = AgentRunResult(
-        AgentConclusion("supported", "proposal", 12_000, 20_000, 0.9),
-        memory,
-        2,
+    context = DirectVerificationContext(
+        workspace=tmp_path,
+        media_paths=("/tmp/candidate.mp4",),
+        start_ms=candidate.start_ms,
+        end_ms=candidate.end_ms,
+        direct_modalities=frozenset({"visual"}),
     )
 
     result = GeminiEventVerifier(FakeClient(), model="gemini-test").verify(
@@ -40,7 +40,7 @@ def test_verifier_is_independent_and_clamps_interval(tmp_path):
         plan,
         candidate,
         VideoAsset("v", "/tmp/video.mp4", "hash", 60_000),
-        run,
+        context,
     )
 
     assert (result.start_ms, result.end_ms) == (10_000, 30_000)

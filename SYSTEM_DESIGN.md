@@ -39,13 +39,8 @@ flowchart LR
         FUSE["Temporal join + weighted RRF"]
     end
 
-    subgraph ACTIVE["3. OmniAgent-style active perception"]
-        GEM["Gemini 3.1 Pro"]
-        TOOLS["get_frames<br/>get_audio<br/>get_clip"]
-        MEM["Persistent evidence memory"]
-    end
-
-    VERIFY["Independent event verifier"]
+    RERANK["3. Lightweight candidate reranking"]
+    VERIFY["4. Direct Gemini verification<br/>one bounded candidate clip"]
     REF["Lightweight timestamp refinement"]
     TL["Optional TimeLens2 grounding"]
     OUT["video + [start,end]<br/>confidence + evidence"]
@@ -53,9 +48,7 @@ flowchart LR
     V --> E --> IDX
     V --> SC --> GE --> IDX
     Q["Investigator query"] --> QP --> SEARCH
-    IDX --> SEARCH --> FUSE --> GEM
-    GEM --> TOOLS --> MEM --> GEM
-    GEM --> VERIFY --> REF --> OUT
+    IDX --> SEARCH --> FUSE --> RERANK --> VERIFY --> REF --> OUT
     REF -. "quality trigger" .-> TL -.-> OUT
 ```
 
@@ -224,43 +217,30 @@ Example plan:
 
 At this stage the result means “worth inspecting,” not “confirmed.”
 
-## 3. Active perception
+## 3. Lightweight reranking and direct verification
 
 ```mermaid
 flowchart TD
-    C["Candidate interval + retrieved evidence"] --> G["Gemini controller"]
-    G --> D{"Enough direct evidence?"}
-    D -->|"appearance / OCR detail"| GF["get_frames"]
-    D -->|"speech / prosody"| GA["get_audio"]
-    D -->|"motion / attribution / sequence"| GC["get_clip"]
-    GF --> FF["Bounded FFmpeg executor"]
-    GA --> FF
-    GC --> FF
-    FF --> M["memory.json"] --> G
-    D -->|"supported / rejected / uncertain"| A["Answer proposal"]
+    C["Broad retrieval candidates"] --> R["Deterministic reranking<br/>required-modality coverage<br/>then retrieval score"]
+    R --> K["Top-K candidates"]
+    K --> FF["One bounded FFmpeg clip<br/>per candidate"]
+    FF --> G["One Gemini multimodal<br/>verification call"]
+    G --> A["supported / rejected / uncertain"]
 ```
 
-The controller is independently implemented from OmniAgent's research environment but preserves its useful interface. Limits are enforced outside the model:
+The default search path deliberately omits the OmniAgent-style controller. Retrieval has already reduced a long recording to short candidates, so repeated model-directed frame/audio/clip requests duplicate work. Each selected candidate receives one replayable clip and one verifier request containing the structured query plan and timestamped retrieved evidence. Candidate media metadata is persisted under `INDEX/runs/direct-verification/`.
 
-- no request may leave the candidate interval;
-- at most 12 frames per frame action;
-- at most 30 seconds per audio action;
-- at most 20 seconds per clip action;
-- repeated actions are rejected;
-- default maximum is five turns;
-- a cross-modal supported answer is blocked until required visual/audio media has been directly inspected.
-
-Each action, observation path, compact assessment, retrieved item, and controller warning is atomically persisted to `INDEX/runs/RUN_ID/memory.json`. Raw media does not accumulate in the prompt; compact evidence memory does.
+The lightweight reranker is local and deterministic. It first favors candidates covering the plan's required modalities, then branch diversity, retrieval score, and evidence confidence. It makes no provider calls and therefore measures the multimodal verifier without adding another learned optimization layer.
 
 ### Bounded candidate scheduling
 
 ```mermaid
 flowchart LR
     K["Top-K retrieval candidates"] --> Q["Bounded candidate queue"]
-    Q --> W1["Worker 1<br/>sequential agent turns"]
-    Q --> W2["Worker 2<br/>sequential agent turns"]
-    Q --> WN["Worker N<br/>sequential agent turns"]
-    W1 --> G["Independent verification"]
+    Q --> W1["Worker 1<br/>clip + one verification"]
+    Q --> W2["Worker 2<br/>clip + one verification"]
+    Q --> WN["Worker N<br/>clip + one verification"]
+    W1 --> G["Verification outcomes"]
     W2 --> G
     WN --> G
     G --> E{"Supported + confidence threshold<br/>+ direct modalities satisfied?"}
@@ -270,8 +250,8 @@ flowchart LR
     DEADLINE["Global search deadline"] --> STOP
 ```
 
-`candidate_parallelism` bounds concurrent candidates without parallelizing an
-individual candidate's agent turns. `early_stop_confidence` is applied only to
+`candidate_parallelism` bounds concurrent one-shot candidate verifications.
+`early_stop_confidence` is applied only to
 verifier-supported evidence whose required visual/audio modalities were
 directly inspected. `timeout_s` starts before retrieval. Completed supported
 verification is retained as a provisional fallback, so timeout returns the
@@ -295,10 +275,10 @@ flowchart TD
     PLAN --> RET["retrieval events"]
     RET --> C1["candidate branch 1"]
     RET --> C2["candidate branch 2"]
-    C1 --> TURN["agent turns + media actions"]
-    C2 --> TURN2["agent turns + media actions"]
-    TURN --> VERIFY["verification + refinement"]
-    TURN2 --> VERIFY
+    C1 --> MEDIA1["direct candidate clip"]
+    C2 --> MEDIA2["direct candidate clip"]
+    MEDIA1 --> VERIFY["verification + refinement"]
+    MEDIA2 --> VERIFY
     API["OpenRouter responses"] --> COST["tokens + actual/fallback cost"]
     COST --> STOP{"time/cost limit?"}
     STOP -->|yes| PARTIAL["persist best partial + cancel pending"]
@@ -317,15 +297,14 @@ replaying all trajectory files.
 
 ## 4. Semantic verification
 
-The active controller proposes an answer. A separate Gemini call is the final semantic gate.
+Gemini directly evaluates each selected candidate in a single multimodal call.
 
 Inputs:
 
 - original query and structured plan;
 - candidate interval;
 - retrieved ASR/OCR/visual/audio evidence;
-- active-observation summaries;
-- selected decisive frames/audio/clips.
+- one bounded candidate clip containing visual and audio evidence.
 
 Output:
 
@@ -372,7 +351,7 @@ The step can improve endpoint error without changing retrieval recall, but a suc
 
 ```mermaid
 flowchart LR
-    RET["Coarse retrieval"] --> GEM["Active perception + verification"]
+    RET["Coarse retrieval"] --> GEM["Direct multimodal verification"]
     GEM --> REF["Lightweight refinement"]
     REF --> CHECK{"Broad interval or<br/>confidence below threshold?"}
     CHECK -->|"No"| OUT["Final interval"]
@@ -391,11 +370,11 @@ flowchart TD
     P --> R["Parallel local retrieval"]
     R --> J["Temporal join + RRF"]
     J --> K["Top-K candidates"]
-    K --> A["Active perception loop"]
-    A --> S{"Complete event supported?"}
-    S -->|"No"| N["Next candidate"] --> A
-    S -->|"Yes"| V["Independent verifier"]
-    V --> F["Timestamp refinement"]
+    K --> A["Lightweight reranking"]
+    A --> V["One direct multimodal<br/>verification per candidate"]
+    V --> S{"Complete event supported?"}
+    S -->|"No"| N["Next candidate"] --> V
+    S -->|"Yes"| F["Timestamp refinement"]
     F --> T{"Specialist needed?"}
     T -->|"No"| O["Ranked evidence result"]
     T -->|"Yes"| TL["TimeLens2 optional"] --> O
@@ -412,7 +391,7 @@ flowchart TD
 | Text index | `IndexStore` | SQLite FTS5 | OpenSearch, Tantivy |
 | Vector index | `VectorIndex` | FAISS with exact fallback | Qdrant, Milvus, pgvector |
 | Query planner | `QueryPlanner` | Gemini or heuristic | another structured LLM/planner |
-| Active policy | `ActivePolicy` | Gemini 3.1 Pro | local multimodal policy |
+| Candidate media | `CandidateMediaProvider` | One bounded FFmpeg clip | alternate deterministic sampler |
 | Verifier | `EventVerifier` | Gemini 3.1 Pro | another frontier VLM or ensemble |
 | Temporal specialist | subprocess adapter | TimeLens2 optional | any interval-grounding service |
 
@@ -424,21 +403,18 @@ The domain dataclasses and JSON schemas are provider-neutral. OpenRouter's OpenA
 flowchart LR
     subgraph RESEARCH["Research sources"]
         VR["Video-RAG"]
-        OA["OmniAgent"]
         TL["TimeLens2"]
     end
     subgraph CODE["PatrolLens"]
         ING["ingestion/ + index/"]
         RET["retrieval/"]
-        AG["agent/ + media_tools/"]
         VER["verification/"]
         TEMP["temporal/"]
     end
     VR -->|"auxiliary evidence + retrieval"| ING
     VR -->|"RAG organization"| RET
-    OA -->|"bounded actions + memory"| AG
     TL -->|"interval abstraction"| TEMP
-    AG --> VER
+    RET -->|"Top-K direct candidate clips"| VER
 ```
 
 No upstream source is vendored. Exact inspected commits and licensing notes are in [upstreams.lock.json](upstreams.lock.json) and [THIRD_PARTY.md](THIRD_PARTY.md).

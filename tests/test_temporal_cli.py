@@ -43,6 +43,7 @@ def test_cli_exposes_new_lifecycle():
     assert search.candidate_parallelism is None
     assert search.early_stop_confidence is None
     assert search.search_timeout_s is None
+    assert not hasattr(search, "max_turns")
     bounded = parser.parse_args(
         [
             "search", "crying", "--candidate-parallelism", "4",
